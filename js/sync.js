@@ -392,13 +392,16 @@ export const ALL_EPUBS = '__all';
 export const ALL_PDFS = '__allpdf';
 export const ALL_KINDLE = '__allkindle';
 export const SHARED = '__shared';
+export const BY_CATEGORY = '__bycat';
 
 export async function listFolder(folderId) {
-  if (folderId === ALL_EPUBS) return allOfKind('epub');
-  if (folderId === ALL_PDFS) return allOfKind('pdf');
-  if (folderId === ALL_KINDLE) return allOfKind('kindle');
+  if (folderId === BY_CATEGORY) return categoryFolders();
+  if (folderId === ALL_EPUBS) return withCategories(await allOfKind('epub'));
+  if (folderId === ALL_PDFS) return withCategories(await allOfKind('pdf'));
+  if (folderId === ALL_KINDLE) return withCategories(await allOfKind('kindle'));
   if (!folderId) {
     const virtual = [
+      ...(session.provider === 'gdrive' ? [{ id: BY_CATEGORY, name: 'Theo thể loại', isFolder: true, icon: '🏷️', note: 'thư mục có sách' }] : []),
       { id: ALL_EPUBS, name: 'Tất cả sách EPUB', isFolder: true, icon: '📚' },
       { id: ALL_PDFS, name: 'Tất cả PDF', isFolder: true, icon: '📄' },
       { id: ALL_KINDLE, name: 'Tất cả sách Kindle (MOBI, AZW3, PRC)', isFolder: true, icon: '📙' },
@@ -442,7 +445,7 @@ export async function search(text) {
       .filter((i) => !i.isFolder);
   }
   const t = text.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  return gCollect(`trashed=false and (${G_EPUB} or ${G_PDF} or ${G_KINDLE}) and name contains '${t}'`);
+  return withCategories(await gCollect(`trashed=false and (${G_EPUB} or ${G_PDF} or ${G_KINDLE}) and name contains '${t}'`));
 }
 
 async function msCollect(url) {
@@ -462,17 +465,54 @@ async function gCollect(q) {
   const out = [];
   let token = '';
   for (let page = 0; page < 10; page++) {
-    const params = new URLSearchParams({ q, fields: 'files(id,name,mimeType,size),nextPageToken', pageSize: '200', orderBy: 'folder,name' });
+    const params = new URLSearchParams({ q, fields: 'files(id,name,mimeType,size,parents),nextPageToken', pageSize: '200', orderBy: 'folder,name' });
     if (token) params.set('pageToken', token);
     const j = await (await apiOk(`${GDRIVE}/files?${params}`)).json();
     for (const f of j.files || []) {
       if (f.mimeType === 'application/vnd.google-apps.folder') out.push({ id: f.id, name: f.name, isFolder: true });
-      else if (isBook(f.name, f.mimeType)) out.push({ id: f.id, name: f.name, size: Number(f.size) || 0 });
+      else if (isBook(f.name, f.mimeType)) out.push({ id: f.id, name: f.name, size: Number(f.size) || 0, parent: f.parents?.[0] });
     }
     token = j.nextPageToken;
     if (!token) break;
   }
   return sortItems(out);
+}
+
+/* ----- Thể loại trên Google Drive = thư mục chứa sách ----- */
+// Danh sách mọi thư mục trên Drive (mã → { name, parent }), giữ 5 phút để không hỏi lại liên tục
+let folderCache = null;
+async function driveFolders() {
+  if (folderCache && Date.now() - folderCache.at < 5 * 60 * 1000) return folderCache.map;
+  const map = new Map();
+  let token = '';
+  for (let page = 0; page < 20; page++) {
+    const params = new URLSearchParams({ q: "mimeType='application/vnd.google-apps.folder' and trashed=false", fields: 'files(id,name,parents),nextPageToken', pageSize: '1000' });
+    if (token) params.set('pageToken', token);
+    const j = await (await apiOk(`${GDRIVE}/files?${params}`)).json();
+    for (const f of j.files || []) map.set(f.id, { name: f.name, parent: f.parents?.[0] });
+    token = j.nextPageToken;
+    if (!token) break;
+  }
+  folderCache = { at: Date.now(), map };
+  for (const [id, f] of map) folderNames.set(id, f.name);
+  return map;
+}
+// Gắn nhãn thể loại (tên thư mục chứa) cho các sách trong danh sách
+async function withCategories(items) {
+  if (session.provider !== 'gdrive' || !items.some((i) => i.parent)) return items;
+  try {
+    const folders = await driveFolders();
+    for (const it of items) if (it.parent && folders.has(it.parent)) it.cat = folders.get(it.parent).name;
+  } catch { /* không có nhãn cũng không sao */ }
+  return items;
+}
+// Mục "Theo thể loại": mọi thư mục có chứa sách, kèm số cuốn → bấm vào là xem sách trong thư mục đó
+async function categoryFolders() {
+  const [books, folders] = await Promise.all([gCollect(`trashed=false and (${G_EPUB} or ${G_PDF} or ${G_KINDLE})`), driveFolders()]);
+  const count = new Map();
+  for (const b of books) if (b.parent && folders.has(b.parent)) count.set(b.parent, (count.get(b.parent) || 0) + 1);
+  return [...count].map(([id, n]) => ({ id, name: folders.get(id).name, isFolder: true, icon: '🏷️', note: `${n} cuốn` }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'vi', { numeric: true }));
 }
 
 const sortItems = (items) => items.sort((a, b) =>
