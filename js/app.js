@@ -99,12 +99,15 @@ function newer(a, b) { return (a?.updatedAt || 0) >= (b?.updatedAt || 0) ? a : b
 const K_LIBCAT = 'libCategory';
 const NO_CAT = '__none';
 const catOf = (b) => b.category || remoteMap[b.id]?.category || '';
-async function setCategory(id, cat) {
+// Thể loại nằm trong thư mục "Ebook sách" trên Drive → ưu tiên xếp trước
+const catMain = (b) => (b.category ? b.categoryMain : remoteMap[b.id]?.categoryMain) === true;
+async function setCategory(id, cat, main) {
   if (cat == null) return;
   const b = await db.get('books', id);
-  if (!b || b.category === cat) return;
-  await db.put('books', { ...b, category: cat });
-  if (cat) sync.push(id, { category: cat }).catch(() => {});
+  const m = !!main;
+  if (!b || (b.category === cat && b.categoryMain === m)) return;
+  await db.put('books', { ...b, category: cat, categoryMain: m });
+  if (cat) sync.push(id, { category: cat, categoryMain: m }).catch(() => {});
   if (!R.id) renderLibrary();
 }
 // Sách đã mở từ Drive trước đây chưa có thể loại → hỏi Drive (hoặc lấy từ máy khác đã biết) một lần
@@ -115,11 +118,11 @@ async function backfillCategories() {
   try {
     const u = sync.currentUser();
     for (const b of await db.all('books')) {
-      if (b.category) continue;
-      const known = remoteMap[b.id]?.category;
-      if (known) { await setCategory(b.id, known); continue; }
+      if (b.category && b.categoryMain !== undefined) continue; // đã đủ thông tin
+      const r = remoteMap[b.id];
+      if (r?.category && r.categoryMain !== undefined) { await setCategory(b.id, r.category, r.categoryMain); continue; }
       if (u && !u.needsReconnect && u.provider === 'gdrive' && b.source?.provider === 'gdrive' && b.source.id) {
-        try { await setCategory(b.id, await sync.fileCategory(b.source.id)); } catch { /* tệp đã xoá / không còn quyền */ }
+        try { const c = await sync.fileCategoryInfo(b.source.id); await setCategory(b.id, c.name, c.main); } catch { /* tệp đã xoá / không còn quyền */ }
       }
     }
   } finally { backfilling = false; }
@@ -127,8 +130,11 @@ async function backfillCategories() {
 function renderCategoryBar(books) {
   const bar = $('catBar');
   const counts = new Map();
-  for (const b of books) { const c = catOf(b) || NO_CAT; counts.set(c, (counts.get(c) || 0) + 1); }
-  const cats = [...counts.keys()].filter((c) => c !== NO_CAT).sort((a, b) => a.localeCompare(b, 'vi'));
+  const main = new Set(); // thể loại thuộc thư mục "Ebook sách"
+  for (const b of books) { const c = catOf(b) || NO_CAT; counts.set(c, (counts.get(c) || 0) + 1); if (catMain(b)) main.add(c); }
+  // Thể loại trong "Ebook sách" xếp trước (theo tên), thể loại khác xếp sau, "Chưa phân loại" cuối cùng
+  const cats = [...counts.keys()].filter((c) => c !== NO_CAT)
+    .sort((a, b) => (main.has(b) - main.has(a)) || a.localeCompare(b, 'vi'));
   let sel = lsGet(K_LIBCAT, '') || '';
   if (sel && !counts.has(sel)) sel = '';
   bar.hidden = cats.length === 0;
@@ -214,7 +220,7 @@ async function downloadAndOpen(fileId, name, expectedId) {
       : `${name}${isPdfBuffer(buf) ? '.pdf' : isKindleBuffer(buf) ? '.mobi' : '.epub'}`;
     const { id } = await importBuffer(buf, fileName, { provider: sync.currentUser().provider, id: fileId });
     // Thể loại = tên thư mục chứa sách trên Drive (vd. "Tiên hiệp") → lưu & đồng bộ
-    sync.fileCategory(fileId).then((cat) => setCategory(id, cat)).catch(() => {});
+    sync.fileCategoryInfo(fileId).then((c) => setCategory(id, c.name, c.main)).catch(() => {});
     hideToast();
     if (expectedId && id !== expectedId) toast('Tệp trên đám mây đã thay đổi so với lúc đọc — sẽ mở như sách mới');
     $('cloudDialog').close();
