@@ -74,6 +74,16 @@ code { font-size: .9em; background: var(--line); padding: 1px 5px; border-radius
 .brand span { display: flex; flex-direction: column; line-height: 1.1; letter-spacing: -.01em; }
 .brand small { font-size: 12px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
 .actions { display: flex; gap: 8px; align-items: center; }
+/* Điện thoại: nút Đồng bộ một hàng, “Mở từ Google Drive” và “+ Thêm sách” chia đôi hàng dưới → luôn thấy đủ */
+@media (max-width: 600px) {
+  #library .topbar { gap: 10px; }
+  #library .actions { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  #library .actions .chip { grid-column: 1 / -1; max-width: none; justify-content: center; }
+  #library .actions .btn { width: 100%; min-width: 0; padding: 10px 10px; }
+  #library .actions .btn > span { overflow: hidden; text-overflow: ellipsis; }
+  #btnCloud[hidden] + label.btn { grid-column: 1 / -1; }
+  #btnCloud .lbl-pre { display: none; }
+}
 .lib-main { flex: 1; overflow-y: auto; padding: 20px 16px calc(32px + var(--safe-bottom)); }
 .grid {
   display: grid; gap: 22px 16px;
