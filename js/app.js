@@ -33,10 +33,15 @@ if (!deviceId) { deviceId = Math.random().toString(36).slice(2) + Date.now().toS
 let deviceName = lsGet('deviceName', guessDeviceName());
 
 const settings = Object.assign(
-  { fontSize: 100, lineHeight: 1.5, fontFamily: '', theme: 'light', flow: 'paginated', pageAnim: 'slide', ttsRate: 1.5, ttsVoice: '', ttsEngine: 'auto', gVoice: '', bgVoice: 'vi_VN-vais1000-medium', openVoice: 'device', startView: 'resume', spread: 'single' },
+  { fontSize: 100, lineHeight: 1.5, fontFamily: '', theme: 'light', flow: 'paginated', pageAnim: 'curl', ttsRate: 1.5, ttsVoice: '', ttsEngine: 'auto', gVoice: '', bgVoice: 'vi_VN-vais1000-medium', openVoice: 'device', startView: 'resume', spread: 'single' },
   lsGet('settings', {}),
 );
 const saveSettings = () => lsSet('settings', settings);
+// Hiệu ứng "Lật giấy" mới: máy đang dùng kiểu Trượt (mặc định cũ) chuyển sang 1 lần; sau đó tuỳ người dùng chọn
+if (!lsGet('curlIntro', false)) {
+  if (settings.pageAnim === 'slide') { settings.pageAnim = 'curl'; saveSettings(); }
+  lsSet('curlIntro', true);
+}
 
 // Sách đang mở: tắt app lúc đang đọc → bật lại mở tiếp đúng cuốn đó (vị trí đọc đã lưu sẵn trong tiến độ)
 const lastBook = {
@@ -719,9 +724,15 @@ const cfiCmp = (a, b) => { try { return new ePub.CFI().compare(a, b); } catch { 
 // Câu đang đọc còn nằm trong trang đang hiển thị không
 const lineOnPage = (line, loc) => !!line && cfiCmp(line, loc.start.cfi) >= 0 && cfiCmp(line, loc.end.cfi) <= 0;
 
+let curlPrepTimer = 0;
 function onRelocated(loc) {
   const cfi = loc.start.cfi;
   R.cfi = cfi;
+  // Dựng sẵn bản sao trang cho hiệu ứng "Lật giấy" (chương mới / vừa mở sách) khi máy rảnh
+  if (settings.pageAnim === 'curl' && !document.hidden) {
+    clearTimeout(curlPrepTimer);
+    curlPrepTimer = setTimeout(() => { const p = pager(); if (p && !curlFinish) curlCloneFor(p.c.scrollLeft); }, 600);
+  }
   // Tự lật sang trang khác (không phải do giọng đọc) → vị trí là đầu trang mới
   if (R.line && !lineOnPage(R.line, loc)) R.line = null;
   const book = R.book;
@@ -883,6 +894,101 @@ function animShift(from, to, ms) {
   });
 }
 
+/* ----- Hiệu ứng "Lật giấy" (như sách thật) ----- */
+// Trang sách nằm trong khung iframe rộng cả chương; trang kế nằm ngay bên phải nên không thể chồng 2 trang lên
+// nhau. Cách làm: giữ sẵn 1 BẢN SAO tĩnh của chương (iframe không chạy script, dựng 1 lần mỗi chương), đặt đúng
+// trang cần hiện lên trên, rồi xoay bản sao quanh gáy sách bằng 3D (kèm bóng đổ) trong khi trang thật bên dưới
+// đã là trang mới (lật tới) / vẫn là trang cũ (lật lùi). Bản sao chưa dựng xong thì lần đó dùng kiểu trượt.
+const curlClones = new Map(); // iframe gốc → { frame, sig, ready }
+const curlSig = (src) => {
+  const d = src.contentDocument;
+  return `${src.offsetWidth}x${src.offsetHeight}|${d?.body?.innerHTML.length}|${[...(d?.querySelectorAll('style') || [])].map((s) => s.textContent.length).join(',')}`;
+};
+function curlLayer() {
+  let layer = $('curlLayer');
+  if (!layer) {
+    layer = document.createElement('div');
+    layer.id = 'curlLayer';
+    layer.innerHTML = '<div class="curl-page"><div class="curl-shade"></div></div><div class="curl-cast"></div>';
+    $('viewerWrap').appendChild(layer);
+  }
+  const v = $('viewer'), w = $('viewerWrap');
+  const vr = v.getBoundingClientRect(), wr = w.getBoundingClientRect();
+  Object.assign(layer.style, { left: `${vr.left - wr.left}px`, top: `${vr.top - wr.top}px`, width: `${vr.width}px`, height: `${vr.height}px` });
+  return layer;
+}
+// Lấy (hoặc dựng nền) bản sao cho chương chứa vị trí cuộn `scroll`; trả về null nếu chưa sẵn sàng
+function curlCloneFor(scroll) {
+  const view = pageEls().find((v) => v.offsetLeft <= scroll + 1 && scroll < v.offsetLeft + v.offsetWidth - 1);
+  const src = view?.querySelector('iframe');
+  if (!src?.contentDocument?.body) return null;
+  for (const [k, c] of curlClones) if (!k.isConnected) { c.frame.remove(); curlClones.delete(k); } // chương đã gỡ
+  const sig = curlSig(src);
+  let c = curlClones.get(src);
+  if (!c || c.sig !== sig) {
+    c?.frame.remove();
+    const frame = document.createElement('iframe');
+    frame.setAttribute('sandbox', 'allow-same-origin'); // chỉ để hiển thị, không chạy script
+    frame.setAttribute('aria-hidden', 'true');
+    frame.tabIndex = -1;
+    Object.assign(frame.style, { width: `${src.offsetWidth}px`, height: `${src.offsetHeight}px` });
+    c = { frame, sig, ready: false };
+    frame.onload = () => { c.ready = true; };
+    frame.srcdoc = '<!DOCTYPE html>' + src.contentDocument.documentElement.outerHTML;
+    curlLayer().querySelector('.curl-page').appendChild(frame);
+    curlClones.set(src, c);
+  }
+  if (!c.ready) return null;
+  for (const o of curlClones.values()) o.frame.style.display = o === c ? '' : 'none';
+  c.frame.style.left = `${view.offsetLeft - scroll}px`;
+  return c;
+}
+// Đang lật dở mà bấm lật tiếp → hoàn tất ngay lần đang chạy rồi mới lật lần mới
+let curlFinish = null;
+const finishCurl = () => curlFinish?.();
+// Lật bằng hiệu ứng giấy: trả về false nếu chưa làm được (để dùng kiểu trượt)
+async function curlTurn(dir, c, start, delta) {
+  const target = start + dir * delta;
+  const clone = curlCloneFor(dir > 0 ? start : target); // tới: bản sao = trang cũ; lùi: bản sao = trang mới
+  if (!clone) return false;
+  const layer = curlLayer();
+  const page = layer.querySelector('.curl-page'), shade = layer.querySelector('.curl-shade'), cast = layer.querySelector('.curl-cast');
+  let finished = false;
+  const done = () => {
+    if (finished) return;
+    finished = true;
+    if (curlFinish === done) curlFinish = null;
+    [page, shade, cast].forEach((el) => el.getAnimations().forEach((x) => x.cancel()));
+    layer.classList.remove('on');
+    if (c.scrollLeft !== target) { R.rendition.manager.ignore = false; c.scrollLeft = target; }
+  };
+  curlFinish = done;
+  layer.classList.add('on');
+  const T = 560, ease = 'cubic-bezier(.3,.6,.25,1)';
+  const flat = 'perspective(1800px) rotateY(0deg)', away = 'perspective(1800px) rotateY(-112deg)';
+  if (dir > 0) {
+    // Trang thật sang trang mới ngay; bản sao (trang cũ) cong lên rồi lật qua gáy bên trái
+    R.rendition.manager.ignore = false;
+    c.scrollLeft = target;
+    const a = page.animate([{ transform: flat }, { transform: 'perspective(1800px) rotateY(-40deg) skewY(-1.5deg)', offset: 0.45 }, { transform: away }], { duration: T, easing: ease, fill: 'forwards' });
+    shade.animate([{ opacity: 0 }, { opacity: 0.9 }], { duration: T, easing: ease, fill: 'forwards' });
+    cast.animate([{ opacity: 0.85 }, { opacity: 0 }], { duration: T, easing: ease, fill: 'forwards' });
+    await a.finished.catch(() => {});
+  } else {
+    // Trang thật vẫn là trang cũ; bản sao (trang trước) lật từ gáy trái phủ xuống, xong mới đổi trang thật
+    const a = page.animate([{ transform: away }, { transform: 'perspective(1800px) rotateY(-40deg) skewY(-1.5deg)', offset: 0.55 }, { transform: flat }], { duration: T, easing: ease, fill: 'forwards' });
+    shade.animate([{ opacity: 0.9 }, { opacity: 0 }], { duration: T, easing: ease, fill: 'forwards' });
+    cast.animate([{ opacity: 0 }, { opacity: 0.85 }], { duration: T, easing: ease, fill: 'forwards' });
+    await a.finished.catch(() => {});
+  }
+  const wasCut = finished; // bị lần lật sau cắt ngang → lần sau tự báo vị trí
+  done();
+  if (!wasCut) R.rendition?.reportLocation();
+  // Chuẩn bị sẵn bản sao cho lần lật sau (chương mới / sau khi đổi cỡ chữ)
+  setTimeout(() => { if (settings.pageAnim === 'curl' && pager()) curlCloneFor(pager().c.scrollLeft); }, 50);
+  return true;
+}
+
 function slideIn(dir) {
   const v = $('viewer');
   if (reduceMotion() || !v.animate) return;
@@ -897,12 +1003,17 @@ async function turn(dir, fromScroll, shift = 0) {
   if (R.kind === 'pdf') return R.pdf?.turn(dir);
   if (!R.rendition) return;
   finishSlide();
+  finishCurl();
   const go = () => (dir > 0 ? R.rendition.next() : R.rendition.prev());
   const p = pager();
   if (!p || reduceMotion()) { setShift(0); return go(); }
   const { c, delta } = p;
   const start = fromScroll ?? c.scrollLeft;
   const within = dir > 0 ? start + c.offsetWidth + delta <= c.scrollWidth + 1 : start > 1;
+  if (within && settings.pageAnim === 'curl' && !shift) {
+    if (await curlTurn(dir, c, start, delta)) return;
+    curlCloneFor(start); // bản sao chưa sẵn → lần này trượt, lần sau sẽ lật giấy
+  }
   if (within) {
     // Lật thật 1 lần; cùng lúc đặt độ lệch để mắt vẫn thấy trang cũ, rồi trượt độ lệch về 0.
     // epub.js đôi khi để cờ "bỏ qua lần cuộn kế" sau lần tự cuộn của nó → xoá cờ để nó xử lý lần cuộn này
@@ -940,6 +1051,12 @@ function dragMove(x, y) {
     else return;
   }
   const max = p.c.scrollWidth - p.c.offsetWidth;
+  if (settings.pageAnim === 'curl') { // lật giấy: không kéo trang theo tay, thả tay là lật cả trang
+    const now = Date.now();
+    s.v = (x - s.lastX) / Math.max(1, now - s.lastT);
+    s.lastX = x; s.lastT = now;
+    return;
+  }
   // Ở đầu/cuối chương không còn trang bên cạnh → kéo có lực cản
   const atEdge = (dx > 0 && s.scroll <= 1) || (dx < 0 && s.scroll >= max - 1);
   s.shift = atEdge ? dx / 3 : dx;
@@ -1537,6 +1654,26 @@ $('ttsRateSel').onchange = (e) => {
 };
 
 /* ----- Bảng mục lục & cài đặt ----- */
+/* ----- Chạm ra ngoài menu là tự đóng (không cần bấm ✕) ----- */
+// Bảng Mục lục / Aa khi đọc: chạm bất cứ đâu ngoài bảng (thanh trên, thanh dưới, lề…) → đóng.
+// (Chạm vào trang sách đã được tapAt() xử lý: đóng bảng thay vì lật trang.)
+document.addEventListener('pointerdown', (e) => {
+  const open = ['tocPanel', 'settingsPanel'].filter((id) => !$(id).hidden);
+  if (!open.length) return;
+  if (open.some((id) => $(id).contains(e.target))) return;
+  if (e.target.closest?.('#btnToc, #btnSettings')) return; // nút mở/đóng tự xử lý
+  open.forEach((id) => { $(id).hidden = true; });
+}, true);
+// Mọi hộp thoại (Đồng bộ, Google Drive…): chạm ra vùng tối bên ngoài khung → đóng
+for (const dlg of document.querySelectorAll('dialog')) {
+  dlg.addEventListener('click', (e) => {
+    if (e.target !== dlg) return;
+    const r = dlg.getBoundingClientRect();
+    const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    if (!inside) dlg.close();
+  });
+}
+
 $('btnToc').onclick = () => { $('settingsPanel').hidden = true; $('tocPanel').hidden = !$('tocPanel').hidden; document.querySelector('#tocList a.current')?.scrollIntoView({ block: 'center' }); };
 $('btnSettings').onclick = () => { $('tocPanel').hidden = true; $('settingsPanel').hidden = !$('settingsPanel').hidden; fillVoices(); };
 document.querySelectorAll('[data-close]').forEach((b) => { b.onclick = () => { $(b.dataset.close).hidden = true; }; });
@@ -1546,7 +1683,10 @@ $('lhUp').onclick = () => changeSetting({ lineHeight: Math.min(2.4, +(settings.l
 $('lhDown').onclick = () => changeSetting({ lineHeight: Math.max(1.0, +(settings.lineHeight - 0.1).toFixed(1)) });
 $('fontFamily').onchange = (e) => changeSetting({ fontFamily: e.target.value });
 $('flowMode').onchange = (e) => changeSetting({ flow: e.target.value });
-$('pageAnim').onchange = (e) => { settings.pageAnim = e.target.value; saveSettings(); }; // không cần dựng lại trang
+$('pageAnim').onchange = (e) => {
+  settings.pageAnim = e.target.value; saveSettings(); // không cần dựng lại trang
+  if (settings.pageAnim === 'curl' && pager()) curlCloneFor(pager().c.scrollLeft); // chuẩn bị sẵn hiệu ứng lật giấy
+};
 $('startView').onchange = (e) => { settings.startView = e.target.value; saveSettings(); };
 $('spreadMode').onchange = (e) => changeSetting({ spread: e.target.value });
 document.querySelectorAll('.sw').forEach((b) => { b.onclick = () => changeSetting({ theme: b.dataset.theme }); });
