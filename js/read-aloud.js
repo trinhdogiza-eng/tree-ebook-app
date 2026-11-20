@@ -678,19 +678,106 @@ export function aiWarmup(voiceId) {
   piperChain = run.catch(() => {});
   return run;
 }
+// ----- Thử nghiệm: để AI tạo giọng nhanh sẵn (length_scale nhỏ hơn) rồi mới tua phần còn lại -----
+// Đo thực tế (20/11/2026, 12 câu, giọng rõ): chỉ giảm ~2–3% thời gian tính mà giọng hơi khác đi → TẮT (= 1),
+// giữ nguyên cách cũ: tạo ở tốc độ gốc rồi tua nhanh bằng WSOLA (phần tua chỉ tốn ~0,05 s cho 45 s âm thanh).
+const AI_NATIVE_MAX = 1;
+export let aiStats = { synthMs: 0, synthCount: 0, audioSec: 0, cacheHits: 0, prefetchMs: 0, prefetchCount: 0 };
+async function aiGenerate(voiceId, rate, text) {
+  const s = await aiSession(voiceId);
+  const r = rate || 1;
+  const native = Math.min(Math.max(r, 1), AI_NATIVE_MAX);
+  if (piperConfig?.inference) piperConfig.inference.length_scale = piperBaseLength / native;
+  const blob = await s.predict(text);
+  return timeStretch(await stream.decode(await blob.arrayBuffer()), r / native);
+}
+
+// ----- Giảm nóng máy (2): tạo giọng trước khi tắt màn hình -----
+// Lúc màn hình còn bật, app tạo sẵn giọng AI cho các câu sắp đọc và cất vào bộ nhớ (dạng 16-bit cho nhẹ).
+// Khi khoá màn hình, giọng AI lấy luôn câu đã tạo → máy gần như không phải tính, cho tới khi dùng hết phần dự trữ.
+const AI_CACHE_MAX_BYTES = 48 * 1024 * 1024; // ~15 phút giọng rõ — đủ nhẹ cho điện thoại
+const aiCache = new Map(); // khoá "giọng|tốc độ|câu" → { sr, pcm: Int16Array, bytes }
+let aiCacheBytes = 0;
+let aiLive = 0;            // số câu đang cần gấp (đang đọc) → việc tạo trước phải nhường
+const cacheKey = (voiceId, rate, text) => `${voiceId}|${(rate || 1).toFixed(2)}|${text}`;
+function cachePut(key, buffer) {
+  if (aiCache.has(key) || !buffer) return;
+  const ch = buffer.getChannelData(0);
+  // Trình duyệt giải mã ra 44.1–48 kHz trong khi giọng AI gốc chỉ 16–22 kHz → hạ một nửa (trung bình 2 mẫu)
+  // vẫn đủ chất lượng mà tốn nửa bộ nhớ.
+  const half = buffer.sampleRate >= 44100;
+  const n = half ? ch.length >> 1 : ch.length;
+  const pcm = new Int16Array(n);
+  for (let i = 0; i < n; i++) {
+    let v = half ? (ch[2 * i] + ch[2 * i + 1]) / 2 : ch[i];
+    v = Math.max(-1, Math.min(1, v));
+    pcm[i] = v < 0 ? v * 0x8000 : v * 0x7fff;
+  }
+  const e = { sr: half ? buffer.sampleRate / 2 : buffer.sampleRate, pcm, bytes: pcm.byteLength };
+  aiCache.set(key, e);
+  aiCacheBytes += e.bytes;
+  for (const [k, v] of aiCache) { // vượt mức → bỏ câu cũ nhất
+    if (aiCacheBytes <= AI_CACHE_MAX_BYTES) break;
+    aiCache.delete(k); aiCacheBytes -= v.bytes;
+  }
+}
+function cacheTake(key) {
+  const e = aiCache.get(key);
+  if (!e) return null;
+  aiCache.delete(key); aiCacheBytes -= e.bytes; // mỗi câu chỉ phát 1 lần → lấy xong là trả lại bộ nhớ
+  if (!stream.ctx) stream.ensure();
+  const buf = stream.ctx.createBuffer(1, e.pcm.length, e.sr);
+  const ch = buf.getChannelData(0);
+  for (let i = 0; i < e.pcm.length; i++) ch[i] = e.pcm[i] / 0x8000;
+  return buf;
+}
+export const aiCacheInfo = () => ({ items: aiCache.size, mb: +(aiCacheBytes / 1048576).toFixed(1), seconds: Math.round([...aiCache.values()].reduce((s, e) => s + e.pcm.length / e.sr, 0)) });
+export function aiCacheClear() { aiCache.clear(); aiCacheBytes = 0; }
+
 // Tạo từng câu một (mô hình không chạy song song được)
 function aiSynth(voiceId, rate, text) {
+  const hit = cacheTake(cacheKey(voiceId, rate, text));
+  if (hit) { aiStats.cacheHits++; return Promise.resolve(hit); }
+  aiLive++;
   const run = piperChain.then(async () => {
-    const s = await aiSession(voiceId);
-    // Tạo giọng ở tốc độ gốc rồi tăng tốc giữ nguyên cao độ (chỉnh length_scale của Piper chỉ nhanh được
-    // tối đa ~1.4× vì các khoảng ngừng không ngắn lại).
-    if (piperConfig?.inference) piperConfig.inference.length_scale = piperBaseLength;
-    const blob = await s.predict(text);
-    return timeStretch(await stream.decode(await blob.arrayBuffer()), rate || 1);
+    const t0 = performance.now();
+    try {
+      const b = await aiGenerate(voiceId, rate, text);
+      aiStats.synthMs += performance.now() - t0; aiStats.synthCount++; aiStats.audioSec += b?.duration || 0;
+      return b;
+    } finally { aiLive--; }
   });
   piperChain = run.catch(() => {});
   return run;
 }
+
+// Tạo trước giọng cho danh sách câu sắp đọc (chạy nền, nhường cho câu đang cần đọc, nghỉ ngắn giữa các câu
+// để máy không chạy hết công suất liên tục). Gọi lại với danh sách mới thì danh sách cũ bị bỏ.
+let prefetchToken = 0;
+export async function aiPrefetch(voiceId, rate, texts, { gapMs = 250 } = {}) {
+  const token = ++prefetchToken;
+  // Bỏ các câu đã đọc qua (không còn trong danh sách sắp đọc) để trả lại bộ nhớ
+  const keep = new Set(texts.map((t) => cacheKey(voiceId, rate, t)));
+  for (const [k, v] of aiCache) if (!keep.has(k)) { aiCache.delete(k); aiCacheBytes -= v.bytes; }
+  for (const text of texts) {
+    if (token !== prefetchToken) return;
+    if (!text || aiCache.has(cacheKey(voiceId, rate, text))) continue;
+    if (aiCacheBytes >= AI_CACHE_MAX_BYTES * 0.95) return; // đã đủ phần dự trữ
+    while (aiLive > 0 && token === prefetchToken) await new Promise((r) => setTimeout(r, 200));
+    if (token !== prefetchToken) return;
+    const run = piperChain.then(async () => {
+      if (token !== prefetchToken) return;
+      const t0 = performance.now();
+      const b = await aiGenerate(voiceId, rate, text);
+      aiStats.prefetchMs += performance.now() - t0; aiStats.prefetchCount++;
+      if (token === prefetchToken) cachePut(cacheKey(voiceId, rate, text), b);
+    });
+    piperChain = run.catch(() => {});
+    try { await run; } catch { /* bỏ câu lỗi */ }
+    await new Promise((r) => setTimeout(r, gapMs));
+  }
+}
+export function aiPrefetchStop() { prefetchToken++; }
 
 export class AiSpeaker extends CloudSpeaker {
   // opts thêm: getAiVoice()
