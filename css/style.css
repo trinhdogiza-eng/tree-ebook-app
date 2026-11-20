@@ -1,5 +1,5 @@
 :root {
-  --bg: #f7f4ee;
+  --bg: #ffffff;               /* = nền trang đọc (nền sáng) → cả app một màu */
   --surface: #ffffff;
   --text: #1f1d1a;
   --muted: #6d675e;
