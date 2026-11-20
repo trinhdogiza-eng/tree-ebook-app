@@ -906,21 +906,47 @@ const curlSig = (src) => {
   const d = src.contentDocument;
   return `${src.offsetWidth}x${src.offsetHeight}|${d?.body?.innerHTML.length}|${[...(d?.querySelectorAll('style') || [])].map((s) => s.textContent.length).join(',')}`;
 };
+// Lớp lật trùm TOÀN MÀN HÌNH đọc (cả 2 thanh trên/dưới được chụp theo vào trang giấy).
+// Mượt: mỗi khung hình chỉ đổi transform/opacity → GPU ghép lớp có sẵn, không phải vẽ lại chữ.
+//   .cp-clip  = khung vuông rất lớn, xoay theo nếp gấp, overflow:hidden → mép phải của nó chính là nếp gấp
+//               (thay cho clip-path vốn bắt vẽ lại mỗi khung hình).
+//   .cp-front = trang đang lật (phần còn phẳng); .cp-back = cùng trang đó phản chiếu qua nếp gấp (mặt sau, chữ ngược mờ).
+//   .cp-shade = bóng của tờ giấy đổ xuống trang mới bên dưới.
 function curlLayer() {
   let layer = $('curlLayer');
   if (!layer) {
     layer = document.createElement('div');
     layer.id = 'curlLayer';
     layer.innerHTML = `
-      <div class="cp-under"><div class="cp-band"></div></div>
-      <div class="cp-front"><div class="cp-pages"></div><div class="cp-band"></div></div>
-      <div class="cp-backwrap"><div class="cp-back"><div class="cp-pages"></div><div class="cp-paper"></div><div class="cp-band"></div></div></div>`;
-    $('viewerWrap').appendChild(layer);
+      <div class="cp-shade"></div>
+      <div class="cp-clip">
+        <div class="cp-page cp-front"><div class="cp-pages"></div><div class="cp-bars"></div></div>
+        <div class="cp-page cp-back"><div class="cp-pages"></div><div class="cp-bars"></div><div class="cp-paper"></div><div class="cp-gloss"></div></div>
+      </div>`;
+    $('reader').appendChild(layer);
   }
-  const v = $('viewer'), w = $('viewerWrap');
-  const vr = v.getBoundingClientRect(), wr = w.getBoundingClientRect();
-  Object.assign(layer.style, { left: `${vr.left - wr.left}px`, top: `${vr.top - wr.top}px`, width: `${vr.width}px`, height: `${vr.height}px` });
+  // Khung chữ trong bản sao đặt đúng chỗ khung chữ thật
+  const rr = $('reader').getBoundingClientRect(), vr = $('viewer').getBoundingClientRect();
+  for (const el of layer.querySelectorAll('.cp-pages')) {
+    Object.assign(el.style, { left: `${vr.left - rr.left}px`, top: `${vr.top - rr.top}px`, width: `${vr.width}px`, height: `${vr.height}px` });
+  }
   return layer;
+}
+// Chụp 2 thanh trên/dưới (tên chương, vạch tiến độ) vào trang giấy để chúng lật cùng trang
+function curlBars(layer) {
+  const show = !$('reader').classList.contains('immersive');
+  for (const host of layer.querySelectorAll('.cp-bars')) {
+    host.replaceChildren();
+    if (!show) continue;
+    for (const bar of [$('readerTop'), $('readerBottom')]) {
+      const cl = bar.cloneNode(true);
+      cl.removeAttribute('id');
+      cl.querySelectorAll('[id]').forEach((e) => e.removeAttribute('id'));
+      const inp = cl.querySelector('input[type=range]');
+      if (inp) inp.value = $('progressSlider').value;
+      host.appendChild(cl);
+    }
+  }
 }
 // Lấy (hoặc dựng nền) bản sao cho chương chứa vị trí cuộn `scroll`; trả về null nếu chưa sẵn sàng
 function curlCloneFor(scroll) {
@@ -930,9 +956,9 @@ function curlCloneFor(scroll) {
   for (const [k, c] of curlClones) if (!k.isConnected) { c.frames.forEach((f) => f.remove()); curlClones.delete(k); } // chương đã gỡ
   const sig = curlSig(src);
   let c = curlClones.get(src);
+  const layer = curlLayer();
   if (!c || c.sig !== sig) {
     c?.frames.forEach((f) => f.remove());
-    const layer = curlLayer();
     const html = '<!DOCTYPE html>' + src.contentDocument.documentElement.outerHTML;
     c = { sig, ready: false, frames: [] };
     let loaded = 0;
@@ -951,51 +977,48 @@ function curlCloneFor(scroll) {
   }
   if (!c.ready) return null;
   for (const o of curlClones.values()) o.frames.forEach((f) => { f.style.display = o === c ? '' : 'none'; });
-  c.frames.forEach((f) => { f.style.left = `${view.offsetLeft - scroll}px`; });
+  c.frames.forEach((f) => { f.style.transform = `translateX(${view.offsetLeft - scroll}px)`; });
   return c;
 }
 
-// Cắt hình chữ nhật W×H theo nửa mặt phẳng side·((X−P)·n) ≥ 0 → danh sách đỉnh đa giác
-function clipRect(W, H, P, n, side) {
-  const pts = [[0, 0], [W, 0], [W, H], [0, H]];
-  const f = ([x, y]) => side * ((x - P[0]) * n[0] + (y - P[1]) * n[1]);
-  const out = [];
-  for (let i = 0; i < 4; i++) {
-    const a = pts[i], b = pts[(i + 1) % 4], fa = f(a), fb = f(b);
-    if (fa >= 0) out.push(a);
-    if ((fa >= 0) !== (fb >= 0)) { const t = fa / (fa - fb); out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]); }
-  }
-  return out;
-}
-const polyCss = (pts) => (pts.length >= 3 ? `polygon(${pts.map(([x, y]) => `${x.toFixed(1)}px ${y.toFixed(1)}px`).join(',')})` : 'polygon(0 0,0 0,0 0)');
-// Đặt 1 dải đổ bóng (dài, mỏng) chạy dọc nếp gấp; mặt "trên" của dải là phía góc trang
-function placeBand(el, W, H, P, n) {
-  const L = 2 * Math.hypot(W, H), B = Math.max(80, W * 0.32);
-  const ang = Math.atan2(n[0], -n[1]); // hướng của nếp gấp d = (−ny, nx)
-  Object.assign(el.style, { width: `${L}px`, height: `${B}px`, left: `${P[0] - L / 2}px`, top: `${P[1] - B / 2}px`, transform: `rotate(${ang}rad)` });
+// Ma trận 2D [a,b,c,d,e,f] như CSS matrix(); mul(A,B) = áp B trước rồi A
+const mMul = (A, B) => [A[0] * B[0] + A[2] * B[1], A[1] * B[0] + A[3] * B[1], A[0] * B[2] + A[2] * B[3], A[1] * B[2] + A[3] * B[3],
+  A[0] * B[4] + A[2] * B[5] + A[4], A[1] * B[4] + A[3] * B[5] + A[5]];
+const mInv = ([a, b, c, d, e, f]) => { const det = a * d - b * c; return [d / det, -b / det, -c / det, a / det, (c * f - d * e) / det, (b * e - a * f) / det]; };
+const mCss = (m) => `matrix(${m.map((v) => v.toFixed(4)).join(',')})`;
+// Chuẩn bị 1 lần mỗi lượt lật: kích thước + phần tử (khỏi đọc bố cục trong từng khung hình)
+function curlState(layer) {
+  const W = layer.clientWidth, H = layer.clientHeight;
+  const S = 2 * Math.hypot(W, H), L = S, B = Math.max(70, W * 0.3);
+  const q = (s) => layer.querySelector(s);
+  const st = { layer, W, H, S, L, B, clip: q('.cp-clip'), front: q('.cp-front'), back: q('.cp-back'), shade: q('.cp-shade'), gloss: q('.cp-gloss') };
+  Object.assign(st.clip.style, { width: `${S}px`, height: `${S}px` });
+  for (const p of [st.front, st.back]) Object.assign(p.style, { width: `${W}px`, height: `${H}px` });
+  for (const g of [st.shade, st.gloss]) Object.assign(g.style, { width: `${B}px`, height: `${L}px` });
+  return st;
 }
 // Vẽ trạng thái lật ở tiến độ t (0 = phẳng, 1 = đã lật hết sang trái); lift: độ nhấc góc lên (theo tay kéo)
-function curlRender(layer, t, lift = 0) {
-  const W = layer.clientWidth, H = layer.clientHeight;
-  const C = [W, H];
+function curlRender(st, t, lift = 0) {
+  const { W, H, S, L } = st;
   // Góc dưới-phải đi theo đường cong lên trên rồi sang trái (giống ngón tay lật trang)
-  const M = [W - 2 * W * t, H - H * (0.32 * Math.sin(Math.PI * Math.min(1, t * 1.05)) + lift)];
-  let n = [C[0] - M[0], C[1] - M[1]];
-  const len = Math.hypot(n[0], n[1]);
-  const front = layer.querySelector('.cp-front'), back = layer.querySelector('.cp-back'), under = layer.querySelector('.cp-under');
-  if (len < 0.5) { // chưa gấp
-    front.style.clipPath = 'none'; back.style.clipPath = 'polygon(0 0,0 0,0 0)'; under.style.opacity = 0;
-    return;
-  }
-  n = [n[0] / len, n[1] / len];
-  const P = [(C[0] + M[0]) / 2, (C[1] + M[1]) / 2];
-  front.style.clipPath = polyCss(clipRect(W, H, P, n, -1)); // phần còn phẳng
-  back.style.clipPath = polyCss(clipRect(W, H, P, n, 1)); // phần bị gấp (toạ độ trước khi phản chiếu)
-  const k = 2 * (P[0] * n[0] + P[1] * n[1]);
-  back.style.transform = `matrix(${1 - 2 * n[0] * n[0]},${-2 * n[0] * n[1]},${-2 * n[0] * n[1]},${1 - 2 * n[1] * n[1]},${k * n[0]},${k * n[1]})`;
-  for (const band of layer.querySelectorAll('.cp-band')) placeBand(band, W, H, P, n);
+  const Mx = W - 2 * W * t, My = H - H * (0.32 * Math.sin(Math.PI * Math.min(1, t * 1.05)) + lift);
+  let nx = W - Mx, ny = H - My, Px, Py;
+  const len = Math.hypot(nx, ny);
+  if (len < 0.5) { nx = 0.96; ny = 0.28; Px = W + 2; Py = H + 2; } // chưa gấp: nếp gấp nằm ngoài góc trang
+  else { nx /= len; ny /= len; Px = (W + Mx) / 2; Py = (H + My) / 2; }
+  const F = [nx, ny, -ny, nx, Px, Py];                   // hệ toạ độ nếp gấp: trục x = pháp tuyến n (hướng về góc trang)
+  const clip = mMul(F, [1, 0, 0, 1, -S, -S / 2]);       // khung cắt nằm phía trang phẳng, mép phải = nếp gấp
+  const inv = mInv(clip);
+  const k = 2 * (Px * nx + Py * ny);
+  const refl = [1 - 2 * nx * nx, -2 * nx * ny, -2 * nx * ny, 1 - 2 * ny * ny, k * nx, k * ny]; // phản chiếu qua nếp gấp
+  const band = mMul(F, [1, 0, 0, 1, 0, -L / 2]);        // dải dọc nếp gấp, toả về phía góc trang
+  st.clip.style.transform = mCss(clip);
+  st.front.style.transform = mCss(inv);
+  st.back.style.transform = mCss(mMul(inv, refl));
+  st.gloss.style.transform = mCss(band);
+  st.shade.style.transform = mCss(band);
   // Bóng mạnh nhất khi trang đang dựng đứng giữa chừng, nhạt dần lúc gần phẳng
-  under.style.opacity = Math.min(1, Math.sin(Math.PI * Math.min(1, t)) * 1.6 + 0.15);
+  st.shade.style.opacity = len < 0.5 ? 0 : Math.min(1, Math.sin(Math.PI * Math.min(1, t)) * 1.6 + 0.2);
 }
 let curlFinish = null;   // đang lật dở mà lật tiếp → hoàn tất ngay lần đang chạy
 const finishCurl = () => curlFinish?.();
@@ -1004,10 +1027,12 @@ function curlAnimate(layer, from, to, ms, lift = 0) {
   return new Promise((resolve) => {
     const t0 = performance.now();
     let stopped = false;
+    // Bấm/chạm: tăng tốc rồi chậm dần; thả tay giữa chừng: đi tiếp theo đà ngón tay rồi chậm dần
+    const ease = from === 0 || from === 1 ? easeInOut : (x) => 1 - Math.pow(1 - x, 3);
     const step = (now) => {
       if (stopped) return;
       const k = Math.min(1, (now - t0) / ms);
-      curlRender(layer, from + (to - from) * easeInOut(k), lift * (1 - k));
+      curlRender(layer, from + (to - from) * ease(k), lift * (1 - ease(k)));
       if (k < 1) requestAnimationFrame(step); else resolve(true);
     };
     requestAnimationFrame(step);
@@ -1027,19 +1052,26 @@ function curlBegin(dir) {
   const clone = curlCloneFor(dir > 0 ? start : target);
   if (!clone) { curlCloneFor(start); return null; } // chưa sẵn → lần này dùng kiểu trượt
   const layer = curlLayer();
+  curlBars(layer);
+  const st = curlState(layer);
   if (dir > 0) { R.rendition.manager.ignore = false; c.scrollLeft = target; }
   const t0 = dir > 0 ? 0 : 1;
-  curlRender(layer, t0);
+  curlRender(st, t0);
   layer.classList.add('on');
-  let finished = false;
+  let finished = false, raf = 0, lastLift = 0;
   const s = {
     dir, t: t0,
-    set(t, lift) { s.t = Math.max(0, Math.min(1, t)); curlRender(layer, s.t, lift); },
+    // Theo tay kéo: gộp các lần di chuyển ngón tay, mỗi khung hình chỉ vẽ 1 lần
+    set(t, lift = 0) {
+      s.t = Math.max(0, Math.min(1, t)); lastLift = lift;
+      if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (!finished) curlRender(st, s.t, lastLift); });
+    },
     // commit = true: lật hẳn; false: trả trang về như cũ
-    async end(commit, lift = 0) {
+    async end(commit, lift = lastLift) {
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
       const to = dir > 0 ? (commit ? 1 : 0) : (commit ? 0 : 1);
-      const ms = 120 + 480 * Math.abs(to - s.t);
-      await curlAnimate(layer, s.t, to, ms, lift);
+      const ms = 180 + 520 * Math.abs(to - s.t);
+      await curlAnimate(st, s.t, to, ms, lift);
       s.done(commit);
     },
     done(commit) {
