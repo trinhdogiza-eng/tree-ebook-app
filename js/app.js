@@ -246,8 +246,9 @@ async function loadCloudItems(loader) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = `cloud-item${have.has(it.id) ? ' have' : ''}`;
-      const size = it.isFolder ? '' : have.has(it.id) ? 'Đã có' : `${(it.size / 1048576).toFixed(1)} MB`;
-      b.innerHTML = `<span class="ic">${it.icon || (it.isFolder ? '📁' : /\.pdf$/i.test(it.name) ? '📄' : '📖')}</span><span class="nm">${esc(it.name)}</span><span class="sz">${size}</span>`;
+      const size = it.isFolder ? esc(it.note || '') : have.has(it.id) ? 'Đã có' : `${(it.size / 1048576).toFixed(1)} MB`;
+      const cat = it.cat ? `<small class="cloud-cat">${esc(it.cat)}</small>` : '';
+      b.innerHTML = `<span class="ic">${it.icon || (it.isFolder ? '📁' : /\.pdf$/i.test(it.name) ? '📄' : '📖')}</span><span class="nm">${esc(it.name)}${cat}</span><span class="sz">${size}</span>`;
       b.onclick = it.isFolder
         ? () => { cloudNav.stack.push({ id: it.id, name: it.name }); $('cloudSearch').value = ''; showCloudFolder(); }
         : () => downloadAndOpen(it.id, it.name);
