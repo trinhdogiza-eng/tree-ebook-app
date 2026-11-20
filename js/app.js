@@ -593,6 +593,11 @@ function injectStyle(contents) {
     body { font-size: ${bodyFs}px !important; background: ${t.bg} !important; color: ${t.fg} !important; -webkit-text-size-adjust: none; }
     p, li, blockquote, dd, dt, td, div { line-height: ${settings.lineHeight} !important; }
     body *:not(img):not(svg):not(image) { background-color: transparent !important; background-image: none !important; }
+    /* Một số sách tự phủ lớp tối/hiệu ứng ánh sáng lên cả trang bằng ::before/::after → bỏ để nền trang
+       đúng một màu, khớp với thanh trên & dưới */
+    html::before, html::after, body::before, body::after, body *::before, body *::after {
+      background-color: transparent !important; background-image: none !important; box-shadow: none !important;
+    }
     ${recolor ? `body *:not(img):not(svg):not(image) { color: inherit !important; border-color: ${t.fg}33 !important; }` : ''}
     a, a * { color: ${t.link} !important; }
     ::highlight(resume) { background-color: ${settings.theme === 'dark' ? 'rgba(110,170,255,.35)' : 'rgba(80,150,255,.28)'}; }
