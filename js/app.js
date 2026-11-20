@@ -817,7 +817,7 @@ async function closeBook() {
   if (R.pdf) R.pdf.destroy();
   Object.assign(R, { id: null, book: null, rendition: null, pdf: null, kind: null, line: null });
   $('reader').classList.remove('is-pdf');
-  document.querySelector('meta[name="theme-color"]').content = getComputedStyle(document.body).getPropertyValue('--bg').trim() || '#f7f4ee';
+  document.querySelector('meta[name="theme-color"]').content = getComputedStyle(document.body).getPropertyValue('--bg').trim() || '#ffffff';
   $('tocPanel').hidden = true; $('settingsPanel').hidden = true;
   showView('library');
   renderLibrary();
