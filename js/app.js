@@ -9,7 +9,7 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '3.0';
+const APP_VERSION = '2.12';
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
