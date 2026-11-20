@@ -149,15 +149,18 @@ code { font-size: .9em; background: var(--line); padding: 1px 5px; border-radius
   display: flex; align-items: center; gap: 4px; padding: 6px 8px;
   background: var(--bg); transition: opacity .2s; z-index: 5;
 }
-.reader-bar.top { padding-top: calc(6px + var(--safe-top)); border-bottom: 1px solid var(--line); }
+/* Thanh trên (tên chương) dịch lên sát mép, thanh dưới (vạch tiến độ) dịch xuống sát mép — mỗi bên ~1,5 mm
+   (bỏ 6px / 8px đệm ngoài; vẫn chừa vùng tai thỏ / thanh vuốt của điện thoại) */
+.reader-bar.top { padding-top: var(--safe-top); }
 .reader-bar.bottom {
   flex-direction: column; align-items: stretch; gap: 2px;
-  padding: 8px 16px calc(8px + var(--safe-bottom)); border-top: 1px solid var(--line);
+  padding: 8px 16px var(--safe-bottom);
 }
 /* Thanh trên/dưới nổi đè lên trang (như Play Sách): phần chữ luôn chiếm trọn màn hình với lề trên = lề dưới,
-   nên chạm để ẩn thanh thì chữ không bị lệch và không phải dàn lại trang */
-.reader-bar.top { position: absolute; top: 0; left: 0; right: 0; box-shadow: 0 1px 6px rgba(0,0,0,.06); }
-.reader-bar.bottom { position: absolute; bottom: 0; left: 0; right: 0; box-shadow: 0 -1px 6px rgba(0,0,0,.06); }
+   nên chạm để ẩn thanh thì chữ không bị lệch và không phải dàn lại trang.
+   Không viền, không bóng → cùng một màu liền với nền trang có chữ. */
+.reader-bar.top { position: absolute; top: 0; left: 0; right: 0; }
+.reader-bar.bottom { position: absolute; bottom: 0; left: 0; right: 0; }
 #reader.immersive .reader-bar { opacity: 0; pointer-events: none; }
 .reader-title { flex: 1; min-width: 0; text-align: center; }
 .reader-title > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
