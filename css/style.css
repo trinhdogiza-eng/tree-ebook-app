@@ -223,7 +223,7 @@ code { font-size: .9em; background: var(--line); padding: 1px 5px; border-radius
 .pdf-stage[data-theme="dark"] .pdf-ph { background: #2a2826; }
 .pager.prev { left: 2px; } .pager.next { right: 2px; }
 .progress-text { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
-#progressSlider { width: 100%; accent-color: var(--accent); }
+#progressSlider, .cp-bars input[type=range] { width: 100%; accent-color: var(--accent); }
 
 .panel {
   position: absolute; top: 0; bottom: 0; right: 0; width: min(360px, 92vw); z-index: 20;
@@ -297,24 +297,22 @@ dialog.tall .dialog-body { height: min(640px, calc(100dvh - 48px)); padding: 12p
 /* ---------- Hiệu ứng "Lật giấy" ---------- */
 /* Lớp phủ đúng vị trí khung chữ; luôn được dựng (ẩn bằng visibility) để bản sao trang sẵn sàng ngay khi lật */
 /* Kiểu Apple Books: góc trang gấp chéo theo nếp gấp; mặt sau thấy chữ in ngược mờ; bóng dọc nếp gấp */
-#curlLayer { position: absolute; z-index: 3; pointer-events: none; visibility: hidden; }
+/* Trùm cả màn hình đọc (trên 2 thanh), dưới mục lục/cài đặt. Chỉ đổi transform/opacity → GPU ghép lớp, mượt */
+#curlLayer { position: absolute; inset: 0; z-index: 6; pointer-events: none; visibility: hidden; overflow: hidden; contain: strict; }
 #curlLayer.on { visibility: visible; }
-#curlLayer > div { position: absolute; inset: 0; }
-.cp-under { overflow: hidden; }                       /* bóng đổ xuống trang mới bên dưới */
-.cp-front, .cp-back { position: absolute; inset: 0; overflow: hidden; background: var(--bg); }
-.cp-back { transform-origin: 0 0; }
-.cp-backwrap { filter: drop-shadow(-3px 2px 7px rgba(0, 0, 0, .28)); } /* bóng của phần giấy gấp lên trang */
-.cp-pages { position: absolute; inset: 0; }
-.cp-pages iframe { position: absolute; top: 0; border: 0; background: transparent; }
+.cp-clip, .cp-page, .cp-shade, .cp-gloss { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+.cp-clip { overflow: hidden; }                       /* mép phải của khung xoay = nếp gấp */
+.cp-page { overflow: hidden; background: var(--bg); }
+.cp-back { box-shadow: 0 0 14px rgba(0, 0, 0, .3); }  /* bóng của tờ giấy gấp đổ lên trang (vẽ 1 lần) */
+.cp-pages { position: absolute; overflow: hidden; }
+.cp-pages iframe { position: absolute; left: 0; top: 0; border: 0; background: transparent; }
+.cp-bars { position: absolute; inset: 0; z-index: 0; } /* gói z-index của thanh lại → lớp giấy mờ phủ được lên */
+.cp-bars .reader-bar { opacity: 1; }
 .cp-paper { position: absolute; inset: 0; background: var(--bg); opacity: .8; } /* giấy mỏng → chữ mặt sau mờ */
-.cp-band { position: absolute; transform-origin: 50% 50%; }
-/* Nửa trên của dải = phía góc trang, nửa dưới = phía trang còn phẳng; giữa dải là nếp gấp */
-.cp-under .cp-band { background: linear-gradient(to bottom, transparent 18%, rgba(0, 0, 0, .14) 40%, rgba(0, 0, 0, .3) 50%, transparent 50%); }
-.cp-front .cp-band { background: linear-gradient(to bottom, transparent 50%, rgba(0, 0, 0, .1) 50%, transparent 68%); }
-.cp-back .cp-band {
-  background: linear-gradient(to bottom, rgba(0, 0, 0, .05) 0%, rgba(255, 255, 255, .45) 24%, rgba(255, 255, 255, .12) 40%, rgba(0, 0, 0, .16) 50%, transparent 50%);
-}
-body[data-theme="dark"] .cp-back .cp-band { opacity: .45; }
+/* Dải dọc nếp gấp (x = 0 là nếp gấp, toả về phía góc trang) */
+.cp-gloss { background: linear-gradient(to right, rgba(0, 0, 0, .16) 0%, rgba(255, 255, 255, .12) 12%, rgba(255, 255, 255, .45) 30%, rgba(0, 0, 0, .05) 100%); }
+.cp-shade { background: linear-gradient(to right, rgba(0, 0, 0, .3) 0%, rgba(0, 0, 0, .12) 25%, transparent 70%); will-change: transform, opacity; }
+body[data-theme="dark"] .cp-gloss { opacity: .45; }
 
 /* ---------- Dock nổi ở đáy màn hình thư viện (kiểu Apple Books) ---------- */
 .lib-main { padding-bottom: calc(108px + var(--safe-bottom)) !important; }
