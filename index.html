@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Tree Ebook</title>
+  <meta name="author" content="Trình Đỗ">
+  <meta name="application-name" content="Tree Ebook">
+  <meta name="theme-color" content="#f7f4ee">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Tree Ebook">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
+</head>
+<body>
+  <!-- ============ THƯ VIỆN ============ -->
+  <section id="library" class="view active">
+    <header class="topbar">
+      <h1 class="brand"><img src="icons/icon.svg" alt="" width="34" height="34"><span>Tree Ebook<small>của Trình Đỗ</small></span></h1>
+      <div class="actions">
+        <button id="btnAccount" class="chip" title="Tài khoản đồng bộ">
+          <span class="dot" id="syncDot"></span><span id="accountLabel">Đồng bộ</span>
+        </button>
+        <button id="btnCloud" class="btn" hidden title="Sách trong Google Drive của bạn">📚 <span id="cloudBtnLabel">Tủ sách của tôi</span></button>
+        <label class="btn primary" for="fileInput">+ Thêm sách</label>
+        <input id="fileInput" type="file" accept=".epub,application/epub+zip,.pdf,application/pdf,.mobi,.azw3,.azw,.prc,application/x-mobipocket-ebook,application/vnd.amazon.ebook" multiple hidden>
+      </div>
+    </header>
+
+    <main class="lib-main">
+      <div id="emptyState" class="empty" hidden>
+        <p class="empty-title">Chưa có sách nào</p>
+        <p>Bấm <b>+ Thêm sách</b> hoặc kéo thả tệp <code>.epub</code> / <code>.pdf</code> / <code>.mobi</code> / <code>.azw3</code> / <code>.prc</code> vào đây.</p>
+      </div>
+      <div id="bookGrid" class="grid"></div>
+
+      <section id="remoteSection" hidden>
+        <h2>Đang đọc trên thiết bị khác</h2>
+        <p class="hint">Sách có tiến độ đã đồng bộ nhưng chưa có tệp trên máy này. Chọn đúng tệp EPUB đó để đọc tiếp.</p>
+        <div id="remoteList" class="remote-list"></div>
+      </section>
+    </main>
+    <div id="dropOverlay" class="drop-overlay" hidden>Thả tệp EPUB, PDF, MOBI, AZW3 hoặc PRC để thêm vào thư viện</div>
+  </section>
+
+  <!-- ============ TRÌNH ĐỌC ============ -->
+  <section id="reader" class="view">
+    <header class="reader-bar top" id="readerTop">
+      <button id="btnBack" class="icon" aria-label="Quay lại thư viện">‹</button>
+      <div class="reader-title">
+        <div id="rTitle"></div>
+        <div id="rChapter" class="sub"></div>
+      </div>
+      <button id="btnTts" class="icon tts-btn" aria-label="Đọc to" title="Đọc to">🔊</button>
+      <button id="btnToc" class="icon" aria-label="Mục lục">☰</button>
+      <button id="btnSettings" class="icon" aria-label="Cài đặt hiển thị">Aa</button>
+    </header>
+
+    <div id="viewerWrap">
+      <div id="viewer"></div>
+      <div class="tapzone left" id="tapPrev" aria-hidden="true"></div>
+      <div class="tapzone right" id="tapNext" aria-hidden="true"></div>
+      <button class="pager prev" id="btnPrev" aria-label="Trang trước">‹</button>
+      <button class="pager next" id="btnNext" aria-label="Trang sau">›</button>
+    </div>
+
+    <div id="ttsBar" class="tts-bar" hidden>
+      <span class="tts-label">🔊 Đang đọc</span>
+      <button id="ttsPlay" class="icon" aria-label="Tạm dừng">⏸</button>
+      <button id="ttsRate" class="chip small" title="Tốc độ đọc (bấm để đổi)">1.5×</button>
+      <button id="ttsStop" class="icon" aria-label="Dừng đọc">⏹</button>
+    </div>
+
+    <footer class="reader-bar bottom" id="readerBottom">
+      <input id="progressSlider" type="range" min="0" max="1000" step="1" value="0" disabled>
+      <div class="progress-text"><span id="progressText">Đang mở…</span><span id="syncText" class="sub"></span></div>
+    </footer>
+
+    <aside id="tocPanel" class="panel" hidden>
+      <div class="panel-head"><b>Mục lục</b><button class="icon" data-close="tocPanel">✕</button></div>
+      <nav id="tocList"></nav>
+    </aside>
+
+    <aside id="settingsPanel" class="panel" hidden>
+      <div class="panel-head"><b>Hiển thị</b><button class="icon" data-close="settingsPanel">✕</button></div>
+      <div class="setting">
+        <span id="fontLabel">Cỡ chữ</span>
+        <div class="stepper">
+          <button id="fontDown">A−</button><span id="fontSizeVal">100%</span><button id="fontUp">A+</button>
+        </div>
+      </div>
+      <div class="setting epub-only">
+        <span>Giãn dòng</span>
+        <div class="stepper">
+          <button id="lhDown">−</button><span id="lhVal">1.5</span><button id="lhUp">+</button>
+        </div>
+      </div>
+      <div class="setting epub-only">
+        <span>Phông chữ</span>
+        <select id="fontFamily">
+          <option value="">Theo sách</option>
+          <option value="Georgia, 'Times New Roman', serif">Có chân (Serif)</option>
+          <option value="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Không chân (Sans)</option>
+        </select>
+      </div>
+      <div class="setting">
+        <span>Nền</span>
+        <div class="themes">
+          <button data-theme="light" class="sw light" aria-label="Sáng"></button>
+          <button data-theme="sepia" class="sw sepia" aria-label="Giấy"></button>
+          <button data-theme="dark" class="sw dark" aria-label="Tối"></button>
+        </div>
+      </div>
+      <div class="setting">
+        <span>Kiểu đọc</span>
+        <select id="flowMode">
+          <option value="paginated">Lật trang</option>
+          <option value="scrolled-doc">Cuộn dọc</option>
+        </select>
+      </div>
+      <div class="setting epub-only" id="spreadRow">
+        <span>Số trang</span>
+        <select id="spreadMode">
+          <option value="single">1 trang</option>
+          <option value="double">2 trang (màn hình rộng)</option>
+        </select>
+      </div>
+      <div class="setting" id="pageAnimRow">
+        <span>Hiệu ứng lật</span>
+        <select id="pageAnim">
+          <option value="slide">Trượt (như Play Sách)</option>
+          <option value="none">Không</option>
+        </select>
+      </div>
+      <div class="setting">
+        <span>Khi mở app</span>
+        <select id="startView">
+          <option value="resume">Mở tiếp sách đang đọc</option>
+          <option value="library">Vào thư viện</option>
+        </select>
+      </div>
+      <div class="setting">
+        <span>Bộ đọc</span>
+        <select id="ttsEngineSel">
+          <option value="auto">Tự động (Google nếu có khoá)</option>
+          <option value="google">Giọng Google</option>
+          <option value="device">Giọng của máy</option>
+        </select>
+      </div>
+      <div class="setting" id="ttsRow">
+        <span>Giọng đọc</span>
+        <select id="ttsVoiceSel"></select>
+      </div>
+      <div class="setting">
+        <span>Giọng khi mở app</span>
+        <select id="openVoiceSel">
+          <option value="device">Giọng Google của máy</option>
+          <option value="ai">Giọng AI (không đổi giọng khi khoá máy)</option>
+        </select>
+      </div>
+      <div class="setting">
+        <span>Khi khoá màn hình<br><small class="hint">hoặc chuyển app</small></span>
+        <select id="bgVoiceSel">
+          <option value="vi_VN-vais1000-medium">Đọc tiếp bằng giọng AI rõ (tải 63 MB)</option>
+          <option value="vi_VN-vivos-x_low">Đọc tiếp bằng giọng AI nhẹ (tải 28 MB)</option>
+          <option value="off">Dừng đọc</option>
+        </select>
+      </div>
+      <div class="setting">
+        <span>Khoá giọng Google<br><small class="hint" id="gKeyState">Chưa có</small></span>
+        <button type="button" id="gKeyBtn" class="btn small">Nhập khoá</button>
+      </div>
+      <div class="setting" id="ttsRateRow">
+        <span>Tốc độ đọc</span>
+        <select id="ttsRateSel">
+          <option value="1">1× (bình thường)</option>
+          <option value="1.25">1.25×</option>
+          <option value="1.5">1.5×</option>
+          <option value="1.75">1.75×</option>
+          <option value="2">2×</option>
+        </select>
+      </div>
+      <p class="hint version" id="appVersion"></p>
+    </aside>
+  </section>
+
+  <!-- ============ TÀI KHOẢN ============ -->
+  <dialog id="accountDialog">
+    <form method="dialog" class="dialog-body" id="accountForm">
+      <h3>Đồng bộ tiến độ đọc</h3>
+      <div id="syncDisabledNote" class="note" hidden>
+        Chưa cấu hình OneDrive / Google Drive nên app chỉ lưu tiến độ trên máy này.
+        Điền Client ID vào <code>js/cloud-config.js</code> (xem README) để bật đồng bộ.
+      </div>
+      <div id="signedOutBox" hidden>
+        <p class="hint">Tiến độ được lưu vào thư mục riêng của app trên ổ đám mây của bạn. Đăng nhập <b>cùng một tài khoản</b> trên Android, iPhone/iPad và Mac để đọc tiếp đúng trang.</p>
+        <button type="button" id="btnOneDrive" class="btn wide provider" hidden>
+          <span class="plogo od"></span>Đăng nhập OneDrive (Microsoft)
+        </button>
+        <button type="button" id="btnGDrive" class="btn wide provider" hidden>
+          <span class="plogo gd"></span>Đăng nhập Google Drive
+        </button>
+      </div>
+      <div id="signedInBox" hidden>
+        <p>Đồng bộ qua <b id="userProvider"></b><br><span class="hint" id="userEmail"></span></p>
+        <p id="reconnectNote" class="note" hidden>Phiên đăng nhập đã hết hạn. Tiến độ vẫn được giữ trên máy và sẽ gửi lên sau khi kết nối lại.</p>
+        <div class="row">
+          <button type="button" id="btnReconnect" class="btn primary" hidden>Kết nối lại</button>
+          <button type="button" id="btnSignOut" class="btn">Đăng xuất</button>
+        </div>
+      </div>
+      <p id="authError" class="error"></p>
+      <label class="field">Tên thiết bị này
+        <input id="deviceName" type="text" maxlength="40">
+      </label>
+      <div class="row end"><button class="btn" value="close">Đóng</button></div>
+    </form>
+  </dialog>
+
+  <!-- ============ DUYỆT SÁCH TRÊN ĐÁM MÂY ============ -->
+  <dialog id="cloudDialog" class="tall">
+    <div class="dialog-body">
+      <div class="cloud-head">
+        <button type="button" id="cloudUp" class="icon" aria-label="Lên thư mục trên">‹</button>
+        <div class="cloud-path"><b id="cloudTitle">OneDrive</b><div id="cloudPath" class="sub"></div></div>
+        <button type="button" class="icon" id="cloudClose" aria-label="Đóng">✕</button>
+      </div>
+      <form id="cloudSearchForm" class="cloud-search">
+        <input id="cloudSearch" type="search" placeholder="Tìm sách theo tên…">
+      </form>
+      <div id="cloudList" class="cloud-list"></div>
+      <p id="cloudStatus" class="hint"></p>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" hidden>
+    <span id="toastMsg"></span>
+    <button id="toastAction" class="btn small primary" hidden></button>
+    <button id="toastClose" class="icon small" aria-label="Đóng">✕</button>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
