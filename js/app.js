@@ -5,7 +5,7 @@ import { kindleToEpub, isKindleBuffer, KINDLE_EXT, KINDLE_MIME } from './mobi-co
 import {
   Speaker, CloudSpeaker, ttsSupported, voices, isVietnamese, pickVoice, unlockSpeech, splitSentences,
   googleVoices, GOOGLE_DEFAULT_VOICE, AiSpeaker, AI_VOICES, AI_DEFAULT_VOICE, aiDownload, aiVoiceStored,
-  aiWarmup, stream,
+  aiWarmup, stream, aiPrefetch, aiPrefetchStop, aiCacheInfo, aiCacheClear, aiStats,
 } from './read-aloud.js';
 
 /* global ePub */
@@ -1019,7 +1019,7 @@ const speakerOpts = {
   getVoiceURI: () => settings.ttsVoice,
   getKey: gKey,
   getGoogleVoice: () => settings.gVoice || GOOGLE_DEFAULT_VOICE,
-  onSegment: (seg) => ttsFollow(seg),
+  onSegment: (seg) => { ttsFollow(seg); schedulePrefetch(seg); },
   onState: (state, ev) => ttsUI(state, ev),
   onError: (msg) => toast(`Giọng Google: ${msg}`, null, null, 6000),
   getMeta: () => {
@@ -1091,6 +1091,57 @@ async function prepareBackgroundVoice() {
   } finally { aiDownloading = false; }
 }
 let ttsNeedsResync = false; // đã đọc sang chương khác trong lúc app bị ẩn → khi quay lại thì nhảy tới chương đó
+
+/* ----- Giảm nóng máy: tạo trước giọng AI lúc màn hình còn bật ----- */
+// Khi đang đọc to và màn hình bật, lấy các câu sắp đọc (hết chương này + tối đa 2 chương sau) rồi cho giọng AI
+// tạo sẵn ở nền. Tắt màn hình → giọng AI dùng luôn phần đã tạo, máy gần như không phải tính nên đỡ nóng.
+const PREFETCH_EVERY_MS = 20000;
+const PREFETCH_MAX_SEGS = 600;
+let prefetchAt = 0;
+let prefetchSec = null;
+function canPrefetch() {
+  return !document.hidden && R.kind !== 'pdf' && R.book && bgAiOn() && aiStored[settings.bgVoice]
+    && speaker && (speaker === deviceSpeaker || speaker === aiSpeaker) && speaker.state === 'playing';
+}
+async function upcomingTexts(seg) {
+  const out = [];
+  let idx;
+  if (seg.contents && seg.range) {
+    idx = seg.contents.sectionIndex;
+    const list = epubSegments(seg.contents, seg.range.startContainer, seg.range.startOffset);
+    out.push(...list.slice(1).map((s) => s.text));
+  } else if (seg.offline && seg.sectionIndex != null) {
+    idx = seg.sectionIndex;
+    const sec = R.book.spine.get(idx);
+    const doc = await sec.load(R.book.load.bind(R.book));
+    const list = epubSegments({ document: doc.ownerDocument || doc }, null).map((s) => s.text);
+    const k = list.indexOf(seg.text);
+    out.push(...list.slice(k + 1));
+  } else return out;
+  for (let n = 1; n <= 2 && out.length < PREFETCH_MAX_SEGS; n++) {
+    const sec = R.book.spine.get(idx + n);
+    if (!sec) break;
+    const doc = await sec.load(R.book.load.bind(R.book));
+    out.push(...epubSegments({ document: doc.ownerDocument || doc }, null).map((s) => s.text));
+  }
+  return out.slice(0, PREFETCH_MAX_SEGS);
+}
+function schedulePrefetch(seg) {
+  if (!seg || !canPrefetch()) return;
+  const secIdx = seg.contents?.sectionIndex ?? seg.sectionIndex;
+  const now = Date.now();
+  if (now - prefetchAt < PREFETCH_EVERY_MS && secIdx === prefetchSec) return;
+  prefetchAt = now; prefetchSec = secIdx;
+  upcomingTexts(seg).then((texts) => {
+    // Bỏ các câu bộ đọc giọng AI đã tự chuẩn bị sẵn (đỡ tạo trùng)
+    const have = new Set(speaker === aiSpeaker ? aiSpeaker.pendingSegs().map((s) => s?.text) : []);
+    texts = texts.filter((t) => !have.has(t));
+    if (texts.length && canPrefetch()) aiPrefetch(settings.bgVoice, settings.ttsRate, texts);
+  }).catch((e) => console.warn('Tạo trước giọng AI:', e));
+}
+// Tắt màn hình / dừng đọc → ngừng tạo trước (để máy nghỉ); giọng AI vẫn dùng phần đã tạo
+document.addEventListener('visibilitychange', () => { if (document.hidden) aiPrefetchStop(); else prefetchAt = 0; });
+if (location.hostname === 'localhost') Object.assign(window, { __aiCache: aiCacheInfo, __aiStats: aiStats, __aiCacheClear: aiCacheClear, __upcoming: upcomingTexts, __segs: epubSegments });
 
 if (location.hostname === 'localhost') window.__speaker = speaker; // chỉ để kiểm thử trên máy
 
@@ -1291,6 +1342,7 @@ function ttsStart() {
   if (speaker === deviceSpeaker || speaker === aiSpeaker) prepareBackgroundVoice();
 }
 function ttsUI(state, ev) {
+  if (state !== 'playing') aiPrefetchStop();
   $('ttsBar').hidden = state === 'idle';
   $('btnTts').classList.toggle('on', state !== 'idle');
   $('ttsPlay').textContent = state === 'playing' ? '⏸' : '▶';
