@@ -392,7 +392,6 @@ export const ALL_EPUBS = '__all';
 export const ALL_PDFS = '__allpdf';
 export const ALL_KINDLE = '__allkindle';
 export const SHARED = '__shared';
-export const SHELF_FOLDER = 'Ebook sách';
 
 export async function listFolder(folderId) {
   if (folderId === ALL_EPUBS) return allOfKind('epub');
@@ -405,11 +404,7 @@ export async function listFolder(folderId) {
       { id: ALL_KINDLE, name: 'Tất cả sách Kindle (MOBI, AZW3, PRC)', isFolder: true, icon: '📙' },
     ];
     if (session.provider === 'gdrive') virtual.push({ id: SHARED, name: 'Được chia sẻ với tôi', isFolder: true, icon: '👥' });
-    const real = await listFolderReal(null);
-    // Kho sách riêng (thư mục "Ebook sách", chia thư mục con theo thể loại) → ghim lên đầu
-    const shelf = real.find((i) => i.isFolder && i.name.normalize() === SHELF_FOLDER.normalize());
-    if (shelf) return [{ ...shelf, name: `Tủ sách của tôi · ${shelf.name}`, icon: '📚' }, ...virtual, ...real.filter((i) => i !== shelf)];
-    return [...virtual, ...real];
+    return [...virtual, ...(await listFolderReal(null))];
   }
   if (folderId === SHARED) return gCollect(`sharedWithMe and trashed=false and ${G_BOOK_OR_FOLDER}`);
   return listFolderReal(folderId);
