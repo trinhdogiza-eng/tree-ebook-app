@@ -511,8 +511,25 @@ async function categoryFolders() {
   const [books, folders] = await Promise.all([gCollect(`trashed=false and (${G_EPUB} or ${G_PDF} or ${G_KINDLE})`), driveFolders()]);
   const count = new Map();
   for (const b of books) if (b.parent && folders.has(b.parent)) count.set(b.parent, (count.get(b.parent) || 0) + 1);
-  return [...count].map(([id, n]) => ({ id, name: folders.get(id).name, isFolder: true, icon: '🏷️', note: `${n} cuốn` }))
-    .sort((a, b) => a.name.localeCompare(b.name, 'vi', { numeric: true }));
+  // Thể loại nằm trong thư mục "Ebook sách" xếp trước, thư mục ở chỗ khác trên Drive xếp cuối
+  return [...count].map(([id, n]) => {
+    const main = isShelf(folders.get(folders.get(id).parent)?.name);
+    return { id, name: folders.get(id).name, isFolder: true, icon: main ? '🏷️' : '📁', note: main ? `${n} cuốn` : `${n} cuốn · ngoài Ebook sách`, main };
+  }).sort((a, b) => (b.main - a.main) || a.name.localeCompare(b.name, 'vi', { numeric: true }));
+}
+// Thư mục kho sách chính
+export const SHELF_NAME = 'Ebook sách';
+const isShelf = (name) => !!name && name.normalize('NFC').trim().toLowerCase() === SHELF_NAME.normalize('NFC').toLowerCase();
+// Thể loại của 1 cuốn + có nằm trong "Ebook sách" không → { name, main }
+export async function fileCategoryInfo(fileId) {
+  const name = await fileCategory(fileId);
+  if (!name) return { name: '', main: false };
+  try {
+    const f = await (await apiOk(`${GDRIVE}/files/${encodeURIComponent(fileId)}?fields=parents`)).json();
+    const folders = await driveFolders();
+    const cat = folders.get(f.parents?.[0]);
+    return { name, main: isShelf(folders.get(cat?.parent)?.name) };
+  } catch { return { name, main: false }; }
 }
 
 const sortItems = (items) => items.sort((a, b) =>
