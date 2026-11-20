@@ -193,7 +193,11 @@ async function renderLibrary() {
   const remoteOnly = Object.entries(remoteMap)
     .filter(([id, r]) => !localIds.has(id) && r.title)
     .sort((a, b) => (b[1].updatedAt || 0) - (a[1].updatedAt || 0));
-  $('remoteSection').hidden = remoteOnly.length === 0;
+  // Trang "Thiết bị khác" (mục trong dock) + số đếm trên dock
+  $('remoteSection').hidden = libTab !== 'remote';
+  $('remoteEmpty').hidden = remoteOnly.length > 0;
+  $('remoteBadge').hidden = remoteOnly.length === 0;
+  $('remoteBadge').textContent = remoteOnly.length > 99 ? '99+' : String(remoteOnly.length);
   const list = $('remoteList');
   list.innerHTML = '';
   const u = sync.currentUser();
@@ -264,9 +268,24 @@ async function loadCloudItems(loader) {
     $('cloudStatus').textContent = `Lỗi: ${sync.errorText(e)}`;
   }
 }
+/* ----- Dock: Trang chủ / Google Drive / Thêm sách / Thiết bị khác ----- */
+let libTab = 'home';
+function setLibTab(tab) {
+  libTab = tab;
+  $('library').classList.toggle('tab-remote', tab === 'remote');
+  $('dockHome').toggleAttribute('aria-current', tab === 'home');
+  $('dockRemote').toggleAttribute('aria-current', tab === 'remote');
+  if (tab === 'home') $('dockHome').setAttribute('aria-current', 'page');
+  if (tab === 'remote') $('dockRemote').setAttribute('aria-current', 'page');
+  document.querySelector('#library .lib-main').scrollTop = 0;
+  renderLibrary();
+}
+$('dockHome').onclick = () => setLibTab('home');
+$('dockRemote').onclick = () => setLibTab('remote');
+
 $('btnCloud').onclick = () => {
   const u = sync.currentUser();
-  if (u?.needsReconnect) { $('btnAccount').click(); return; }
+  if (!u || u.needsReconnect) { $('btnAccount').click(); return; } // chưa đăng nhập Drive → mở phần đăng nhập
   $('cloudDialog').showModal();
   if (!$('cloudList').children.length) showCloudFolder();
 };
@@ -1569,9 +1588,10 @@ function updateAccountUI() {
   $('userEmail').textContent = u ? u.email || '' : '';
   $('reconnectNote').hidden = !u?.needsReconnect;
   $('btnReconnect').hidden = !u?.needsReconnect;
-  $('btnCloud').hidden = !u;
-  // "Mở từ " ẩn trên điện thoại (CSS) để nút không bị cắt chữ
-  $('cloudBtnLabel').innerHTML = `<span class="lbl-pre">Mở từ </span>${esc(u ? u.providerName : 'đám mây')}`;
+  // Nút Google Drive nằm trong dock, luôn hiện ("Mở từ " được ẩn bằng CSS)
+  const provs = sync.providers();
+  const cloudName = u ? u.providerName : provs.length === 1 ? provs[0].name : 'Đám mây';
+  $('cloudBtnLabel').innerHTML = `<span class="lbl-pre">Mở từ </span>${esc(cloudName)}`;
   if (R.id) updateSyncText();
 }
 
