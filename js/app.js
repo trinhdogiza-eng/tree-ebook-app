@@ -1455,7 +1455,8 @@ function updateAccountUI() {
   $('reconnectNote').hidden = !u?.needsReconnect;
   $('btnReconnect').hidden = !u?.needsReconnect;
   $('btnCloud').hidden = !u;
-  $('cloudBtnLabel').textContent = u ? `Mở từ ${u.providerName}` : 'Mở từ đám mây';
+  // "Mở từ " ẩn trên điện thoại (CSS) để nút không bị cắt chữ
+  $('cloudBtnLabel').innerHTML = `<span class="lbl-pre">Mở từ </span>${esc(u ? u.providerName : 'đám mây')}`;
   if (R.id) updateSyncText();
 }
 
