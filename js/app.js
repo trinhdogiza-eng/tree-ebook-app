@@ -894,12 +894,14 @@ function animShift(from, to, ms) {
   });
 }
 
-/* ----- Hiệu ứng "Lật giấy" (như sách thật) ----- */
-// Trang sách nằm trong khung iframe rộng cả chương; trang kế nằm ngay bên phải nên không thể chồng 2 trang lên
-// nhau. Cách làm: giữ sẵn 1 BẢN SAO tĩnh của chương (iframe không chạy script, dựng 1 lần mỗi chương), đặt đúng
-// trang cần hiện lên trên, rồi xoay bản sao quanh gáy sách bằng 3D (kèm bóng đổ) trong khi trang thật bên dưới
-// đã là trang mới (lật tới) / vẫn là trang cũ (lật lùi). Bản sao chưa dựng xong thì lần đó dùng kiểu trượt.
-const curlClones = new Map(); // iframe gốc → { frame, sig, ready }
+/* ----- Hiệu ứng "Lật giấy" kiểu Apple Books: góc trang gấp chéo, mặt sau in ngược mờ, bóng dọc nếp gấp ----- */
+// Trang sách nằm trong khung iframe rộng cả chương (trang kế ở ngay bên phải), nên giữ sẵn 2 BẢN SAO tĩnh của
+// chương (iframe không chạy script, dựng 1 lần mỗi chương): 1 làm mặt trước trang đang lật, 1 làm mặt sau.
+// Hình học: góc dưới-phải C của trang bị kéo tới điểm M; nếp gấp là đường trung trực của CM.
+//   - Mặt trước = phần trang phía bên kia nếp gấp (cắt bằng clip-path).
+//   - Mặt sau  = phần phía góc, lật đối xứng qua nếp gấp (ma trận phản chiếu) → chữ in ngược, phủ màu giấy cho mờ.
+//   - Trang mới nằm bên dưới (khung sách thật), có bóng đổ dọc nếp gấp.
+const curlClones = new Map(); // iframe gốc → { frames: [mặt trước, mặt sau], sig, ready }
 const curlSig = (src) => {
   const d = src.contentDocument;
   return `${src.offsetWidth}x${src.offsetHeight}|${d?.body?.innerHTML.length}|${[...(d?.querySelectorAll('style') || [])].map((s) => s.textContent.length).join(',')}`;
@@ -909,7 +911,10 @@ function curlLayer() {
   if (!layer) {
     layer = document.createElement('div');
     layer.id = 'curlLayer';
-    layer.innerHTML = '<div class="curl-page"><div class="curl-shade"></div></div><div class="curl-cast"></div>';
+    layer.innerHTML = `
+      <div class="cp-under"><div class="cp-band"></div></div>
+      <div class="cp-front"><div class="cp-pages"></div><div class="cp-band"></div></div>
+      <div class="cp-backwrap"><div class="cp-back"><div class="cp-pages"></div><div class="cp-paper"></div><div class="cp-band"></div></div></div>`;
     $('viewerWrap').appendChild(layer);
   }
   const v = $('viewer'), w = $('viewerWrap');
@@ -922,72 +927,145 @@ function curlCloneFor(scroll) {
   const view = pageEls().find((v) => v.offsetLeft <= scroll + 1 && scroll < v.offsetLeft + v.offsetWidth - 1);
   const src = view?.querySelector('iframe');
   if (!src?.contentDocument?.body) return null;
-  for (const [k, c] of curlClones) if (!k.isConnected) { c.frame.remove(); curlClones.delete(k); } // chương đã gỡ
+  for (const [k, c] of curlClones) if (!k.isConnected) { c.frames.forEach((f) => f.remove()); curlClones.delete(k); } // chương đã gỡ
   const sig = curlSig(src);
   let c = curlClones.get(src);
   if (!c || c.sig !== sig) {
-    c?.frame.remove();
-    const frame = document.createElement('iframe');
-    frame.setAttribute('sandbox', 'allow-same-origin'); // chỉ để hiển thị, không chạy script
-    frame.setAttribute('aria-hidden', 'true');
-    frame.tabIndex = -1;
-    Object.assign(frame.style, { width: `${src.offsetWidth}px`, height: `${src.offsetHeight}px` });
-    c = { frame, sig, ready: false };
-    frame.onload = () => { c.ready = true; };
-    frame.srcdoc = '<!DOCTYPE html>' + src.contentDocument.documentElement.outerHTML;
-    curlLayer().querySelector('.curl-page').appendChild(frame);
+    c?.frames.forEach((f) => f.remove());
+    const layer = curlLayer();
+    const html = '<!DOCTYPE html>' + src.contentDocument.documentElement.outerHTML;
+    c = { sig, ready: false, frames: [] };
+    let loaded = 0;
+    for (const host of [layer.querySelector('.cp-front .cp-pages'), layer.querySelector('.cp-back .cp-pages')]) {
+      const frame = document.createElement('iframe');
+      frame.setAttribute('sandbox', 'allow-same-origin'); // chỉ để hiển thị, không chạy script
+      frame.setAttribute('aria-hidden', 'true');
+      frame.tabIndex = -1;
+      Object.assign(frame.style, { width: `${src.offsetWidth}px`, height: `${src.offsetHeight}px` });
+      frame.onload = () => { if (++loaded === 2) c.ready = true; };
+      frame.srcdoc = html;
+      host.appendChild(frame);
+      c.frames.push(frame);
+    }
     curlClones.set(src, c);
   }
   if (!c.ready) return null;
-  for (const o of curlClones.values()) o.frame.style.display = o === c ? '' : 'none';
-  c.frame.style.left = `${view.offsetLeft - scroll}px`;
+  for (const o of curlClones.values()) o.frames.forEach((f) => { f.style.display = o === c ? '' : 'none'; });
+  c.frames.forEach((f) => { f.style.left = `${view.offsetLeft - scroll}px`; });
   return c;
 }
-// Đang lật dở mà bấm lật tiếp → hoàn tất ngay lần đang chạy rồi mới lật lần mới
-let curlFinish = null;
-const finishCurl = () => curlFinish?.();
-// Lật bằng hiệu ứng giấy: trả về false nếu chưa làm được (để dùng kiểu trượt)
-async function curlTurn(dir, c, start, delta) {
-  const target = start + dir * delta;
-  const clone = curlCloneFor(dir > 0 ? start : target); // tới: bản sao = trang cũ; lùi: bản sao = trang mới
-  if (!clone) return false;
-  const layer = curlLayer();
-  const page = layer.querySelector('.curl-page'), shade = layer.querySelector('.curl-shade'), cast = layer.querySelector('.curl-cast');
-  let finished = false;
-  const done = () => {
-    if (finished) return;
-    finished = true;
-    if (curlFinish === done) curlFinish = null;
-    [page, shade, cast].forEach((el) => el.getAnimations().forEach((x) => x.cancel()));
-    layer.classList.remove('on');
-    if (c.scrollLeft !== target) { R.rendition.manager.ignore = false; c.scrollLeft = target; }
-  };
-  curlFinish = done;
-  layer.classList.add('on');
-  const T = 560, ease = 'cubic-bezier(.3,.6,.25,1)';
-  const flat = 'perspective(1800px) rotateY(0deg)', away = 'perspective(1800px) rotateY(-112deg)';
-  if (dir > 0) {
-    // Trang thật sang trang mới ngay; bản sao (trang cũ) cong lên rồi lật qua gáy bên trái
-    R.rendition.manager.ignore = false;
-    c.scrollLeft = target;
-    const a = page.animate([{ transform: flat }, { transform: 'perspective(1800px) rotateY(-40deg) skewY(-1.5deg)', offset: 0.45 }, { transform: away }], { duration: T, easing: ease, fill: 'forwards' });
-    shade.animate([{ opacity: 0 }, { opacity: 0.9 }], { duration: T, easing: ease, fill: 'forwards' });
-    cast.animate([{ opacity: 0.85 }, { opacity: 0 }], { duration: T, easing: ease, fill: 'forwards' });
-    await a.finished.catch(() => {});
-  } else {
-    // Trang thật vẫn là trang cũ; bản sao (trang trước) lật từ gáy trái phủ xuống, xong mới đổi trang thật
-    const a = page.animate([{ transform: away }, { transform: 'perspective(1800px) rotateY(-40deg) skewY(-1.5deg)', offset: 0.55 }, { transform: flat }], { duration: T, easing: ease, fill: 'forwards' });
-    shade.animate([{ opacity: 0.9 }, { opacity: 0 }], { duration: T, easing: ease, fill: 'forwards' });
-    cast.animate([{ opacity: 0 }, { opacity: 0.85 }], { duration: T, easing: ease, fill: 'forwards' });
-    await a.finished.catch(() => {});
+
+// Cắt hình chữ nhật W×H theo nửa mặt phẳng side·((X−P)·n) ≥ 0 → danh sách đỉnh đa giác
+function clipRect(W, H, P, n, side) {
+  const pts = [[0, 0], [W, 0], [W, H], [0, H]];
+  const f = ([x, y]) => side * ((x - P[0]) * n[0] + (y - P[1]) * n[1]);
+  const out = [];
+  for (let i = 0; i < 4; i++) {
+    const a = pts[i], b = pts[(i + 1) % 4], fa = f(a), fb = f(b);
+    if (fa >= 0) out.push(a);
+    if ((fa >= 0) !== (fb >= 0)) { const t = fa / (fa - fb); out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]); }
   }
-  const wasCut = finished; // bị lần lật sau cắt ngang → lần sau tự báo vị trí
-  done();
-  if (!wasCut) R.rendition?.reportLocation();
-  // Chuẩn bị sẵn bản sao cho lần lật sau (chương mới / sau khi đổi cỡ chữ)
-  setTimeout(() => { if (settings.pageAnim === 'curl' && pager()) curlCloneFor(pager().c.scrollLeft); }, 50);
+  return out;
+}
+const polyCss = (pts) => (pts.length >= 3 ? `polygon(${pts.map(([x, y]) => `${x.toFixed(1)}px ${y.toFixed(1)}px`).join(',')})` : 'polygon(0 0,0 0,0 0)');
+// Đặt 1 dải đổ bóng (dài, mỏng) chạy dọc nếp gấp; mặt "trên" của dải là phía góc trang
+function placeBand(el, W, H, P, n) {
+  const L = 2 * Math.hypot(W, H), B = Math.max(80, W * 0.32);
+  const ang = Math.atan2(n[0], -n[1]); // hướng của nếp gấp d = (−ny, nx)
+  Object.assign(el.style, { width: `${L}px`, height: `${B}px`, left: `${P[0] - L / 2}px`, top: `${P[1] - B / 2}px`, transform: `rotate(${ang}rad)` });
+}
+// Vẽ trạng thái lật ở tiến độ t (0 = phẳng, 1 = đã lật hết sang trái); lift: độ nhấc góc lên (theo tay kéo)
+function curlRender(layer, t, lift = 0) {
+  const W = layer.clientWidth, H = layer.clientHeight;
+  const C = [W, H];
+  // Góc dưới-phải đi theo đường cong lên trên rồi sang trái (giống ngón tay lật trang)
+  const M = [W - 2 * W * t, H - H * (0.32 * Math.sin(Math.PI * Math.min(1, t * 1.05)) + lift)];
+  let n = [C[0] - M[0], C[1] - M[1]];
+  const len = Math.hypot(n[0], n[1]);
+  const front = layer.querySelector('.cp-front'), back = layer.querySelector('.cp-back'), under = layer.querySelector('.cp-under');
+  if (len < 0.5) { // chưa gấp
+    front.style.clipPath = 'none'; back.style.clipPath = 'polygon(0 0,0 0,0 0)'; under.style.opacity = 0;
+    return;
+  }
+  n = [n[0] / len, n[1] / len];
+  const P = [(C[0] + M[0]) / 2, (C[1] + M[1]) / 2];
+  front.style.clipPath = polyCss(clipRect(W, H, P, n, -1)); // phần còn phẳng
+  back.style.clipPath = polyCss(clipRect(W, H, P, n, 1)); // phần bị gấp (toạ độ trước khi phản chiếu)
+  const k = 2 * (P[0] * n[0] + P[1] * n[1]);
+  back.style.transform = `matrix(${1 - 2 * n[0] * n[0]},${-2 * n[0] * n[1]},${-2 * n[0] * n[1]},${1 - 2 * n[1] * n[1]},${k * n[0]},${k * n[1]})`;
+  for (const band of layer.querySelectorAll('.cp-band')) placeBand(band, W, H, P, n);
+  // Bóng mạnh nhất khi trang đang dựng đứng giữa chừng, nhạt dần lúc gần phẳng
+  under.style.opacity = Math.min(1, Math.sin(Math.PI * Math.min(1, t)) * 1.6 + 0.15);
+}
+let curlFinish = null;   // đang lật dở mà lật tiếp → hoàn tất ngay lần đang chạy
+const finishCurl = () => curlFinish?.();
+const easeInOut = (x) => (x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2);
+function curlAnimate(layer, from, to, ms, lift = 0) {
+  return new Promise((resolve) => {
+    const t0 = performance.now();
+    let stopped = false;
+    const step = (now) => {
+      if (stopped) return;
+      const k = Math.min(1, (now - t0) / ms);
+      curlRender(layer, from + (to - from) * easeInOut(k), lift * (1 - k));
+      if (k < 1) requestAnimationFrame(step); else resolve(true);
+    };
+    requestAnimationFrame(step);
+    curlAnimate.stop = () => { stopped = true; resolve(false); };
+  });
+}
+// Bắt đầu 1 lần lật giấy (cho cả bấm/chạm lẫn kéo tay). Trả về phiên { dir, set(t), end(commit) } hoặc null
+function curlBegin(dir) {
+  const p = pager();
+  if (!p) return null;
+  const { c, delta } = p;
+  const start = c.scrollLeft;
+  const within = dir > 0 ? start + c.offsetWidth + delta <= c.scrollWidth + 1 : start > 1;
+  if (!within) return null;
+  const target = start + dir * delta;
+  // Lật tới: trang đang lật = trang hiện tại, bên dưới là trang sau. Lật lùi: trang đang lật = trang trước.
+  const clone = curlCloneFor(dir > 0 ? start : target);
+  if (!clone) { curlCloneFor(start); return null; } // chưa sẵn → lần này dùng kiểu trượt
+  const layer = curlLayer();
+  if (dir > 0) { R.rendition.manager.ignore = false; c.scrollLeft = target; }
+  const t0 = dir > 0 ? 0 : 1;
+  curlRender(layer, t0);
+  layer.classList.add('on');
+  let finished = false;
+  const s = {
+    dir, t: t0,
+    set(t, lift) { s.t = Math.max(0, Math.min(1, t)); curlRender(layer, s.t, lift); },
+    // commit = true: lật hẳn; false: trả trang về như cũ
+    async end(commit, lift = 0) {
+      const to = dir > 0 ? (commit ? 1 : 0) : (commit ? 0 : 1);
+      const ms = 120 + 480 * Math.abs(to - s.t);
+      await curlAnimate(layer, s.t, to, ms, lift);
+      s.done(commit);
+    },
+    done(commit) {
+      if (finished) return;
+      finished = true;
+      if (curlFinish === s.cut) curlFinish = null;
+      layer.classList.remove('on');
+      const want = commit ? target : start;
+      if (c.scrollLeft !== want) { R.rendition.manager.ignore = false; c.scrollLeft = want; }
+      R.rendition?.reportLocation();
+      // Chuẩn bị sẵn bản sao cho lần lật sau (chương mới / sau khi đổi cỡ chữ)
+      setTimeout(() => { const q = pager(); if (settings.pageAnim === 'curl' && q) curlCloneFor(q.c.scrollLeft); }, 50);
+    },
+    cut() { curlAnimate.stop?.(); s.done(true); },
+  };
+  curlFinish = s.cut;
+  return s;
+}
+// Lật bằng nút / chạm mép / phím: trả về false nếu chưa làm được (để dùng kiểu trượt)
+async function curlTurn(dir) {
+  const s = curlBegin(dir);
+  if (!s) return false;
+  await s.end(true);
   return true;
 }
+if (location.hostname === 'localhost') window.__curl = { begin: curlBegin };
 
 function slideIn(dir) {
   const v = $('viewer');
@@ -1010,9 +1088,8 @@ async function turn(dir, fromScroll, shift = 0) {
   const { c, delta } = p;
   const start = fromScroll ?? c.scrollLeft;
   const within = dir > 0 ? start + c.offsetWidth + delta <= c.scrollWidth + 1 : start > 1;
-  if (within && settings.pageAnim === 'curl' && !shift) {
-    if (await curlTurn(dir, c, start, delta)) return;
-    curlCloneFor(start); // bản sao chưa sẵn → lần này trượt, lần sau sẽ lật giấy
+  if (within && settings.pageAnim === 'curl' && !shift && fromScroll == null) {
+    if (await curlTurn(dir)) return; // bản sao chưa sẵn → lần này trượt, lần sau sẽ lật giấy
   }
   if (within) {
     // Lật thật 1 lần; cùng lúc đặt độ lệch để mắt vẫn thấy trang cũ, rồi trượt độ lệch về 0.
@@ -1037,6 +1114,7 @@ const prev = () => turn(-1);
 let drag = null;
 function dragStart(x, y) {
   finishSlide();
+  finishCurl();
   const p = pager();
   drag = { x, y, time: Date.now(), scroll: p ? p.c.scrollLeft : 0, active: false, shift: 0, lastX: x, lastT: Date.now(), v: 0 };
 }
@@ -1051,10 +1129,16 @@ function dragMove(x, y) {
     else return;
   }
   const max = p.c.scrollWidth - p.c.offsetWidth;
-  if (settings.pageAnim === 'curl') { // lật giấy: không kéo trang theo tay, thả tay là lật cả trang
+  if (settings.pageAnim === 'curl') { // lật giấy: góc trang gấp theo ngón tay
     const now = Date.now();
     s.v = (x - s.lastX) / Math.max(1, now - s.lastT);
     s.lastX = x; s.lastT = now;
+    if (!s.curl && !s.noCurl) { s.curl = curlBegin(dx < 0 ? 1 : -1); if (!s.curl) s.noCurl = true; }
+    if (s.curl) {
+      const prog = Math.min(1, Math.abs(dx) / (p.c.offsetWidth * 0.95));
+      s.lift = Math.max(-0.12, Math.min(0.3, -dy / p.c.offsetHeight)); // kéo lên → góc nhấc cao hơn
+      s.curl.set(s.curl.dir > 0 ? prog : 1 - prog, s.lift);
+    }
     return;
   }
   // Ở đầu/cuối chương không còn trang bên cạnh → kéo có lực cản
@@ -1068,6 +1152,7 @@ function dragMove(x, y) {
 function cancelDrag() {
   const s = drag;
   drag = null;
+  if (s?.curl) { s.curl.end(false); return; }
   if (s?.active) animShift(s.shift, 0, 200);
 }
 // Trả về 'tap' nếu là một cú chạm, 'done' nếu đã xử lý (lật/kéo), '' nếu bỏ qua.
@@ -1077,6 +1162,13 @@ function dragEnd(x, y) {
   if (!s) return '';
   const dx = x - s.x, dy = y - s.y, dt = Date.now() - s.time;
   const p = pager();
+  if (s.curl) { // đang gấp giấy theo tay: đủ xa hoặc vuốt nhanh đúng chiều → lật hẳn, không thì trả về
+    const fling = Math.abs(s.v) > 0.35 && Math.sign(-s.v) === s.curl.dir;
+    const back = Math.abs(s.v) > 0.35 && Math.sign(-s.v) === -s.curl.dir;
+    const prog = s.curl.dir > 0 ? s.curl.t : 1 - s.curl.t;
+    s.curl.end(!back && (fling || prog > 0.28), s.lift || 0);
+    return 'done';
+  }
   if (s.active && p) {
     const fling = Math.abs(s.v) > 0.35;
     if (fling || Math.abs(dx) > p.c.offsetWidth * 0.18) turn((fling ? s.v : dx) < 0 ? 1 : -1, s.scroll, s.shift);
