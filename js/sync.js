@@ -478,6 +478,21 @@ async function gCollect(q) {
 const sortItems = (items) => items.sort((a, b) =>
   (b.isFolder ? 1 : 0) - (a.isFolder ? 1 : 0) || a.name.localeCompare(b.name, 'vi', { numeric: true }));
 
+// Thể loại của 1 cuốn trên Google Drive = tên thư mục chứa nó (vd. "Ebook sách/Tiên hiệp/abc.epub" → "Tiên hiệp").
+// Nằm thẳng ở thư mục gốc "Drive của tôi" → không có thể loại.
+const folderNames = new Map(); // mã thư mục → tên (đỡ hỏi lại)
+export async function fileCategory(fileId) {
+  if (!ready() || session.provider !== 'gdrive' || !fileId) return '';
+  const f = await (await apiOk(`${GDRIVE}/files/${encodeURIComponent(fileId)}?fields=parents`)).json();
+  const pid = f.parents?.[0];
+  if (!pid) return '';
+  if (!folderNames.has(pid)) {
+    const p = await (await apiOk(`${GDRIVE}/files/${encodeURIComponent(pid)}?fields=name,parents`)).json();
+    folderNames.set(pid, p.parents?.length ? (p.name || '') : ''); // thư mục gốc không có "parents"
+  }
+  return folderNames.get(pid);
+}
+
 export async function download(fileId) {
   const url = session.provider === 'onedrive'
     ? `${GRAPH}/me/drive/items/${fileId}/content`
