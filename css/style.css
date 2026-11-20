@@ -294,6 +294,24 @@ dialog.tall .dialog-body { height: min(640px, calc(100dvh - 48px)); padding: 12p
 .cloud-item .sz { color: var(--muted); font-size: 12px; flex: none; }
 .cloud-item.have .sz { color: #3a9d5d; }
 
+/* ---------- Hiệu ứng "Lật giấy" ---------- */
+/* Lớp phủ đúng vị trí khung chữ; luôn được dựng (ẩn bằng visibility) để bản sao trang sẵn sàng ngay khi lật */
+#curlLayer { position: absolute; z-index: 3; pointer-events: none; visibility: hidden; }
+#curlLayer.on { visibility: visible; }
+.curl-page {
+  position: absolute; inset: 0; overflow: hidden; background: var(--bg);
+  transform-origin: left center; -webkit-backface-visibility: hidden; backface-visibility: hidden;
+  box-shadow: 6px 0 22px rgba(0, 0, 0, .18);
+}
+.curl-page iframe { position: absolute; top: 0; border: 0; background: transparent; }
+/* Mép trang cong: tối dần về phía mép, có vệt sáng như giấy đang uốn */
+.curl-shade {
+  position: absolute; inset: 0; z-index: 2; opacity: 0;
+  background: linear-gradient(to right, transparent 0%, transparent 50%, rgba(0, 0, 0, .10) 76%, rgba(255, 255, 255, .38) 90%, rgba(0, 0, 0, .22) 100%);
+}
+/* Bóng của trang đang lật đổ xuống trang bên dưới (gần gáy sách) */
+.curl-cast { position: absolute; inset: 0; z-index: -1; opacity: 0; background: linear-gradient(to right, rgba(0, 0, 0, .22), rgba(0, 0, 0, .07) 30%, transparent 62%); }
+
 /* ---------- Dock nổi ở đáy màn hình thư viện (kiểu Apple Books) ---------- */
 .lib-main { padding-bottom: calc(108px + var(--safe-bottom)) !important; }
 .dock {
