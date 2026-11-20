@@ -27,8 +27,6 @@
         <button id="btnAccount" class="chip" title="Tài khoản đồng bộ">
           <span class="dot" id="syncDot"></span><span id="accountLabel">Đồng bộ</span>
         </button>
-        <button id="btnCloud" class="btn" hidden>☁ <span id="cloudBtnLabel">Mở từ đám mây</span></button>
-        <label class="btn primary" for="fileInput">+ Thêm sách</label>
         <input id="fileInput" type="file" accept=".epub,application/epub+zip,.pdf,application/pdf,.mobi,.azw3,.azw,.prc,application/x-mobipocket-ebook,application/vnd.amazon.ebook" multiple hidden>
       </div>
     </header>
@@ -43,11 +41,36 @@
 
       <section id="remoteSection" hidden>
         <h2>Đang đọc trên thiết bị khác</h2>
-        <p class="hint">Sách có tiến độ đã đồng bộ nhưng chưa có tệp trên máy này. Chọn đúng tệp EPUB đó để đọc tiếp.</p>
+        <p class="hint">Sách có tiến độ đã đồng bộ nhưng chưa có tệp trên máy này. Tải về để đọc tiếp đúng chỗ.</p>
         <div id="remoteList" class="remote-list"></div>
+        <div id="remoteEmpty" class="empty" hidden>
+          <p class="empty-title">Chưa có sách nào</p>
+          <p>Sách bạn đang đọc trên điện thoại, máy tính bảng hay máy tính khác (cùng tài khoản Đồng bộ) mà máy này chưa có sẽ hiện ở đây.</p>
+        </div>
       </section>
     </main>
     <div id="dropOverlay" class="drop-overlay" hidden>Thả tệp EPUB, PDF, MOBI, AZW3 hoặc PRC để thêm vào thư viện</div>
+
+    <!-- Thanh dock nổi ở đáy màn hình thư viện -->
+    <nav class="dock" aria-label="Điều hướng thư viện">
+      <button type="button" class="dock-item" id="dockHome" data-tab="home" aria-current="page">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.2 2.6 11a1 1 0 0 0 1.3 1.5l.6-.5V20a1.5 1.5 0 0 0 1.5 1.5h3.5V15h5v6.5H18a1.5 1.5 0 0 0 1.5-1.5v-8l.6.5A1 1 0 0 0 21.4 11Z"/></svg>
+        <span>Trang chủ</span>
+      </button>
+      <button type="button" class="dock-item" id="btnCloud">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.4 10.2A6.5 6.5 0 0 0 6 8.6 5 5 0 0 0 6.5 19h11.4a4.5 4.5 0 0 0 .5-8.8Z"/></svg>
+        <span id="cloudBtnLabel">Google Drive</span>
+      </button>
+      <label class="dock-item" for="fileInput" id="dockAdd">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3.5A1.5 1.5 0 0 1 6.5 2H18a1 1 0 0 1 1 1v13.5a1 1 0 0 1-1 1H7a1 1 0 0 0 0 2h11a1 1 0 1 1 0 2H7a3 3 0 0 1-2-.8Zm6.2 4.3v2.5H8.7a1 1 0 1 0 0 2h2.5v2.5a1 1 0 1 0 2 0v-2.5h2.5a1 1 0 1 0 0-2h-2.5V7.8a1 1 0 1 0-2 0Z"/></svg>
+        <span>Thêm sách</span>
+      </label>
+      <button type="button" class="dock-item" id="dockRemote" data-tab="remote">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.5A1.5 1.5 0 0 1 4.5 4h12A1.5 1.5 0 0 1 18 5.5V8h-2V6H5v9h7v2H1.5a.5.5 0 0 1-.5-.5V16a1 1 0 0 1 1-1h1Zm11 4A1.5 1.5 0 0 1 15.5 8h6A1.5 1.5 0 0 1 23 9.5v10a1.5 1.5 0 0 1-1.5 1.5h-6A1.5 1.5 0 0 1 14 19.5Zm2 .5v8h5v-8Z"/></svg>
+        <span>Thiết bị khác</span>
+        <b class="dock-badge" id="remoteBadge" hidden></b>
+      </button>
+    </nav>
   </section>
 
   <!-- ============ TRÌNH ĐỌC ============ -->
