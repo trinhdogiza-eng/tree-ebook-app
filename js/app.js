@@ -146,13 +146,11 @@ async function renderLibrary() {
     const el = document.createElement('div');
     el.className = 'remote-item';
     const where = r.deviceName ? ` · ${esc(r.deviceName)}` : '';
-    const fromWeb = r.source?.provider === 'web' && r.source.id;   // sách lấy từ trang web Tree Ebook
-    const canDownload = fromWeb || (u && !u.needsReconnect && r.source?.provider === u.provider);
+    const canDownload = u && !u.needsReconnect && r.source?.provider === u.provider;
     el.innerHTML = `<div class="info"><div class="t">${esc(r.title)}</div>
       <div class="s">${esc(r.author || '')}${r.author ? ' · ' : ''}${pctText(r.percent)}${where}</div></div>
-      <button class="btn small ${canDownload ? 'primary' : ''}">${fromWeb ? 'Tải về máy này' : canDownload ? `Tải từ ${esc(u.providerName)}` : 'Chọn tệp…'}</button>`;
-    el.querySelector('button').onclick = fromWeb ? () => openFromLink(r.source.id)
-      : canDownload ? () => downloadAndOpen(r.source.id, r.title, id)
+      <button class="btn small ${canDownload ? 'primary' : ''}">${canDownload ? `Tải từ ${esc(u.providerName)}` : 'Chọn tệp…'}</button>`;
+    el.querySelector('button').onclick = canDownload ? () => downloadAndOpen(r.source.id, r.title, id)
       : () => $('fileInput').click();
     list.appendChild(el);
   }
@@ -1457,7 +1455,7 @@ function updateAccountUI() {
   $('reconnectNote').hidden = !u?.needsReconnect;
   $('btnReconnect').hidden = !u?.needsReconnect;
   $('btnCloud').hidden = !u;
-  $('cloudBtnLabel').textContent = 'Tủ sách của tôi';
+  $('cloudBtnLabel').textContent = u ? `Mở từ ${u.providerName}` : 'Mở từ đám mây';
   if (R.id) updateSyncText();
 }
 
@@ -1513,102 +1511,15 @@ function onUser(u) {
   });
 }
 
-/* ================= Mở sách từ đường link ================= */
-// Ví dụ: https://app.dvt-treebook.com/?mo=https://dvt-treebook.com/files/ten-sach.epub
-// Chỉ nhận tệp nằm trên chính app hoặc trên trang sách Tree Ebook (danh sách BOOK_SITES).
-// Ghi nhớ link trước khi xử lý, phòng khi app tự chuyển trang để làm mới phiên đăng nhập.
-const BOOK_SITE = 'https://dvt-treebook.com';
-const BOOK_SITES = [BOOK_SITE, 'https://www.dvt-treebook.com', 'http://localhost:8090'];
-// Nguồn cũ chỉ lưu đường dẫn ("/files/x.epub") → hiểu là trên trang sách
-const resolveBookUrl = (src) => new URL(src, /^\//.test(src) ? BOOK_SITE : location.href);
-const K_OPEN = 'pendingOpen';
-function takeOpenLink() {
-  const q = new URLSearchParams(location.search);
-  const src = q.get('mo');
-  if (src) {
-    lsSet(K_OPEN, { src, at: Date.now() });
-    q.delete('mo');
-    const rest = q.toString();
-    history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : '') + location.hash);
-  }
-  const p = lsGet(K_OPEN, null);
-  if (!p || Date.now() - p.at > 5 * 60 * 1000) { localStorage.removeItem(K_OPEN); return null; }
-  return p.src;
-}
-async function openFromLink(src) {
-  let url;
-  try { url = /^\//.test(src) && !BOOK_SITES.includes(location.origin) ? resolveBookUrl(src) : new URL(src, location.href); } catch { url = null; }
-  if (!url || !(url.origin === location.origin || BOOK_SITES.includes(url.origin)) || !/^https?:$/.test(url.protocol)) {
-    localStorage.removeItem(K_OPEN);
-    toast('Chỉ mở được sách từ trang Tree Ebook'); return;
-  }
-  const name = decodeURIComponent(url.pathname.split('/').pop() || 'sach.epub');
-  try {
-    toast(`Đang tải “${name}”…`, null, null, 0);
-    const res = await fetch(url, { cache: 'no-cache', mode: 'cors' });
-    if (!res.ok) throw new Error(`máy chủ báo lỗi ${res.status}`);
-    // Ghi nguồn (địa chỉ đầy đủ) → máy khác thấy sách trong "đang đọc ở thiết bị khác" và tải về được ngay
-    const { id } = await importBuffer(await res.arrayBuffer(), name, { provider: 'web', id: url.href });
-    localStorage.removeItem(K_OPEN);
-    hideToast();
-    renderLibrary();
-    openBook(id);
-  } catch (e) {
-    localStorage.removeItem(K_OPEN);
-    console.error(e);
-    toast(`Không mở được “${name}”: ${e.message || e}`);
-  }
-}
-
-// Từ "Tủ sách riêng" trên trang web: …/app/?drive=<mã tệp Google Drive>&ten=<tên tệp>  → tải từ Drive rồi mở
-// và …/app/?ve=/#/rieng  → đăng nhập / làm mới phiên xong thì quay lại trang web.
-const K_DRIVE = 'pendingDrive';
-const K_BACK = 'pendingBack';
-function takeParam(name, key, extra) {
-  const q = new URLSearchParams(location.search);
-  const v = q.get(name);
-  if (v) {
-    lsSet(key, { v, ...(extra ? { x: q.get(extra) } : {}), at: Date.now() });
-    q.delete(name); if (extra) q.delete(extra);
-    const rest = q.toString();
-    history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : '') + location.hash);
-  }
-  const p = lsGet(key, null);
-  if (!p || Date.now() - p.at > 10 * 60 * 1000) { localStorage.removeItem(key); return null; }
-  return p;
-}
-const driveLink = takeParam('drive', K_DRIVE, 'ten');
-const backLink = takeParam('ve', K_BACK);
-function afterSignIn() {
-  const u = sync.currentUser();
-  if (!u || u.needsReconnect) {
-    if (driveLink || backLink) toast('Hãy đăng nhập Google Drive (nút “Đồng bộ”) để mở Tủ sách riêng', null, null, 8000);
-    return;
-  }
-  if (backLink) {
-    localStorage.removeItem(K_BACK);
-    let url = null;
-    try { url = new URL(backLink.v, location.href); } catch { /* bỏ qua */ }
-    if (url && url.origin === location.origin) { location.replace(url.href); return; }
-  }
-  if (driveLink && u.provider === 'gdrive') {
-    localStorage.removeItem(K_DRIVE);
-    downloadAndOpen(driveLink.v, driveLink.x || 'sach.epub');
-  }
-}
-
 /* ================= Khởi động ================= */
-const openLink = takeOpenLink();
 db.requestPersistence();
 applyChrome();
 renderLibrary();
 updateAccountUI();
-if (openLink) openFromLink(openLink);
-else if (settings.startView === 'resume' && !driveLink && !backLink) lastBook.resume().catch(() => {});
+if (settings.startView === 'resume') lastBook.resume().catch(() => {});
 sync.init(onUser).then(() => {
   const err = sync.takeLastError();
   if (err) toast(`Đăng nhập không thành công: ${err}`, null, null, 8000);
-  else afterSignIn();
 }).catch((e) => {
   console.error('Không khởi tạo được đồng bộ', e);
   toast('Không kết nối được dịch vụ đồng bộ — đang dùng chế độ ngoại tuyến');
