@@ -296,21 +296,25 @@ dialog.tall .dialog-body { height: min(640px, calc(100dvh - 48px)); padding: 12p
 
 /* ---------- Hiệu ứng "Lật giấy" ---------- */
 /* Lớp phủ đúng vị trí khung chữ; luôn được dựng (ẩn bằng visibility) để bản sao trang sẵn sàng ngay khi lật */
+/* Kiểu Apple Books: góc trang gấp chéo theo nếp gấp; mặt sau thấy chữ in ngược mờ; bóng dọc nếp gấp */
 #curlLayer { position: absolute; z-index: 3; pointer-events: none; visibility: hidden; }
 #curlLayer.on { visibility: visible; }
-.curl-page {
-  position: absolute; inset: 0; overflow: hidden; background: var(--bg);
-  transform-origin: left center; -webkit-backface-visibility: hidden; backface-visibility: hidden;
-  box-shadow: 6px 0 22px rgba(0, 0, 0, .18);
+#curlLayer > div { position: absolute; inset: 0; }
+.cp-under { overflow: hidden; }                       /* bóng đổ xuống trang mới bên dưới */
+.cp-front, .cp-back { position: absolute; inset: 0; overflow: hidden; background: var(--bg); }
+.cp-back { transform-origin: 0 0; }
+.cp-backwrap { filter: drop-shadow(-3px 2px 7px rgba(0, 0, 0, .28)); } /* bóng của phần giấy gấp lên trang */
+.cp-pages { position: absolute; inset: 0; }
+.cp-pages iframe { position: absolute; top: 0; border: 0; background: transparent; }
+.cp-paper { position: absolute; inset: 0; background: var(--bg); opacity: .8; } /* giấy mỏng → chữ mặt sau mờ */
+.cp-band { position: absolute; transform-origin: 50% 50%; }
+/* Nửa trên của dải = phía góc trang, nửa dưới = phía trang còn phẳng; giữa dải là nếp gấp */
+.cp-under .cp-band { background: linear-gradient(to bottom, transparent 18%, rgba(0, 0, 0, .14) 40%, rgba(0, 0, 0, .3) 50%, transparent 50%); }
+.cp-front .cp-band { background: linear-gradient(to bottom, transparent 50%, rgba(0, 0, 0, .1) 50%, transparent 68%); }
+.cp-back .cp-band {
+  background: linear-gradient(to bottom, rgba(0, 0, 0, .05) 0%, rgba(255, 255, 255, .45) 24%, rgba(255, 255, 255, .12) 40%, rgba(0, 0, 0, .16) 50%, transparent 50%);
 }
-.curl-page iframe { position: absolute; top: 0; border: 0; background: transparent; }
-/* Mép trang cong: tối dần về phía mép, có vệt sáng như giấy đang uốn */
-.curl-shade {
-  position: absolute; inset: 0; z-index: 2; opacity: 0;
-  background: linear-gradient(to right, transparent 0%, transparent 50%, rgba(0, 0, 0, .10) 76%, rgba(255, 255, 255, .38) 90%, rgba(0, 0, 0, .22) 100%);
-}
-/* Bóng của trang đang lật đổ xuống trang bên dưới (gần gáy sách) */
-.curl-cast { position: absolute; inset: 0; z-index: -1; opacity: 0; background: linear-gradient(to right, rgba(0, 0, 0, .22), rgba(0, 0, 0, .07) 30%, transparent 62%); }
+body[data-theme="dark"] .cp-back .cp-band { opacity: .45; }
 
 /* ---------- Dock nổi ở đáy màn hình thư viện (kiểu Apple Books) ---------- */
 .lib-main { padding-bottom: calc(108px + var(--safe-bottom)) !important; }
