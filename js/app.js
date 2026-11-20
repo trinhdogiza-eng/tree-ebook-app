@@ -95,9 +95,57 @@ const coverUrls = [];
 
 function newer(a, b) { return (a?.updatedAt || 0) >= (b?.updatedAt || 0) ? a : b; }
 
+/* ----- Thể loại sách (theo thư mục trên Google Drive) ----- */
+const K_LIBCAT = 'libCategory';
+const NO_CAT = '__none';
+const catOf = (b) => b.category || remoteMap[b.id]?.category || '';
+async function setCategory(id, cat) {
+  if (cat == null) return;
+  const b = await db.get('books', id);
+  if (!b || b.category === cat) return;
+  await db.put('books', { ...b, category: cat });
+  if (cat) sync.push(id, { category: cat }).catch(() => {});
+  if (!R.id) renderLibrary();
+}
+// Sách đã mở từ Drive trước đây chưa có thể loại → hỏi Drive (hoặc lấy từ máy khác đã biết) một lần
+let backfilling = false;
+async function backfillCategories() {
+  if (backfilling) return;
+  backfilling = true;
+  try {
+    const u = sync.currentUser();
+    for (const b of await db.all('books')) {
+      if (b.category) continue;
+      const known = remoteMap[b.id]?.category;
+      if (known) { await setCategory(b.id, known); continue; }
+      if (u && !u.needsReconnect && u.provider === 'gdrive' && b.source?.provider === 'gdrive' && b.source.id) {
+        try { await setCategory(b.id, await sync.fileCategory(b.source.id)); } catch { /* tệp đã xoá / không còn quyền */ }
+      }
+    }
+  } finally { backfilling = false; }
+}
+function renderCategoryBar(books) {
+  const bar = $('catBar');
+  const counts = new Map();
+  for (const b of books) { const c = catOf(b) || NO_CAT; counts.set(c, (counts.get(c) || 0) + 1); }
+  const cats = [...counts.keys()].filter((c) => c !== NO_CAT).sort((a, b) => a.localeCompare(b, 'vi'));
+  let sel = lsGet(K_LIBCAT, '') || '';
+  if (sel && !counts.has(sel)) sel = '';
+  bar.hidden = cats.length === 0;
+  if (bar.hidden) return '';
+  const chip = (val, label, n) => `<button type="button" class="cat-chip${sel === val ? ' on' : ''}" data-cat="${esc(val)}">${esc(label)} <small>${n}</small></button>`;
+  bar.innerHTML = chip('', 'Tất cả', books.length)
+    + cats.map((c) => chip(c, c, counts.get(c))).join('')
+    + (counts.has(NO_CAT) ? chip(NO_CAT, 'Chưa phân loại', counts.get(NO_CAT)) : '');
+  bar.querySelectorAll('[data-cat]').forEach((el) => { el.onclick = () => { lsSet(K_LIBCAT, el.dataset.cat); renderLibrary(); }; });
+  return sel;
+}
+
 async function renderLibrary() {
-  const [books, progress] = await Promise.all([db.all('books'), db.all('progress')]);
+  const [allBooks, progress] = await Promise.all([db.all('books'), db.all('progress')]);
   const prog = Object.fromEntries(progress.map((p) => [p.id, p]));
+  const selCat = renderCategoryBar(allBooks);
+  const books = !selCat ? allBooks : allBooks.filter((b) => (catOf(b) || NO_CAT) === selCat);
   books.sort((a, b) => {
     const ta = newer(prog[a.id], remoteMap[a.id])?.updatedAt || a.addedAt;
     const tb = newer(prog[b.id], remoteMap[b.id])?.updatedAt || b.addedAt;
@@ -107,7 +155,7 @@ async function renderLibrary() {
 
   const grid = $('bookGrid');
   grid.innerHTML = '';
-  $('emptyState').hidden = books.length > 0;
+  $('emptyState').hidden = allBooks.length > 0;
   for (const b of books) {
     const p = newer(prog[b.id], remoteMap[b.id]);
     const el = document.createElement('div');
@@ -120,6 +168,7 @@ async function renderLibrary() {
       <div class="meta">
         <div class="t">${esc(b.title)}</div>
         <div class="a">${esc(b.author) || '&nbsp;'}</div>
+        ${catOf(b) && !selCat ? `<div class="c">${esc(catOf(b))}</div>` : ''}
         <div class="bar"><i style="width:${Math.round((p?.percent || 0) * 100)}%"></i></div>
       </div>`;
     el.onclick = () => openBook(b.id);
@@ -134,7 +183,7 @@ async function renderLibrary() {
   }
 
   // Sách đang đọc ở thiết bị khác nhưng máy này chưa có tệp
-  const localIds = new Set(books.map((b) => b.id));
+  const localIds = new Set(allBooks.map((b) => b.id));
   const remoteOnly = Object.entries(remoteMap)
     .filter(([id, r]) => !localIds.has(id) && r.title)
     .sort((a, b) => (b[1].updatedAt || 0) - (a[1].updatedAt || 0));
@@ -148,7 +197,7 @@ async function renderLibrary() {
     const where = r.deviceName ? ` · ${esc(r.deviceName)}` : '';
     const canDownload = u && !u.needsReconnect && r.source?.provider === u.provider;
     el.innerHTML = `<div class="info"><div class="t">${esc(r.title)}</div>
-      <div class="s">${esc(r.author || '')}${r.author ? ' · ' : ''}${pctText(r.percent)}${where}</div></div>
+      <div class="s">${r.category ? `<b class="rc">${esc(r.category)}</b> · ` : ''}${esc(r.author || '')}${r.author ? ' · ' : ''}${pctText(r.percent)}${where}</div></div>
       <button class="btn small ${canDownload ? 'primary' : ''}">${canDownload ? `Tải từ ${esc(u.providerName)}` : 'Chọn tệp…'}</button>`;
     el.querySelector('button').onclick = canDownload ? () => downloadAndOpen(r.source.id, r.title, id)
       : () => $('fileInput').click();
@@ -164,6 +213,8 @@ async function downloadAndOpen(fileId, name, expectedId) {
     const fileName = /\.(epub|pdf)$/i.test(name) || KINDLE_EXT.test(name) ? name
       : `${name}${isPdfBuffer(buf) ? '.pdf' : isKindleBuffer(buf) ? '.mobi' : '.epub'}`;
     const { id } = await importBuffer(buf, fileName, { provider: sync.currentUser().provider, id: fileId });
+    // Thể loại = tên thư mục chứa sách trên Drive (vd. "Tiên hiệp") → lưu & đồng bộ
+    sync.fileCategory(fileId).then((cat) => setCategory(id, cat)).catch(() => {});
     hideToast();
     if (expectedId && id !== expectedId) toast('Tệp trên đám mây đã thay đổi so với lúc đọc — sẽ mở như sách mới');
     $('cloudDialog').close();
@@ -1559,7 +1610,7 @@ function onUser(u) {
   let first = true;
   unwatchAll = sync.watchAll((map) => {
     remoteMap = map;
-    if (first) { first = false; uploadLocalProgress(); }
+    if (first) { first = false; uploadLocalProgress(); backfillCategories(); }
     if (!R.id) renderLibrary();
   });
 }
