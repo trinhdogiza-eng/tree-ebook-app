@@ -591,11 +591,11 @@ function sanitizeSection(html) {
 function normalizeText(doc) {
   const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    const v = n.nodeValue;
-    if (/[̀-ͯ]/.test(v)) {
-      const nfc = v.normalize('NFC');
-      if (nfc !== v) n.nodeValue = nfc;
-    }
+    let v = n.nodeValue;
+    if (/[̀-ͯ]/.test(v)) v = v.normalize('NFC');
+    // Dấu cách kiểu chữ Hán (U+3000) không co lại được → thừa ở cuối đoạn sẽ lố ra ngoài mép trang
+    if (v.includes('　')) v = v.replace(/　+/g, ' ');
+    if (v !== n.nodeValue) n.nodeValue = v;
   }
 }
 
@@ -627,8 +627,36 @@ function injectStyle(contents) {
     ::highlight(resume) { background-color: ${settings.theme === 'dark' ? 'rgba(110,170,255,.35)' : 'rgba(80,150,255,.28)'}; }
     ::highlight(tts) { background-color: ${settings.theme === 'dark' ? 'rgba(224,138,94,.38)' : 'rgba(255,196,0,.38)'}; }
     ${settings.fontFamily ? `body, body p, body div, body span, body li, body blockquote, body td, body h1, body h2, body h3, body h4 { font-family: ${settings.fontFamily} !important; }` : ''}
-    img, svg, image { max-width: 100%; }
+    /* ---- Căn vừa trang trên mọi máy ----
+       epub.js giới hạn ảnh bằng đúng bề rộng cột nhưng không trừ lề của sách → ảnh lố mép phải vài px,
+       đẩy các trang sau lệch dần. Giới hạn theo khung chứa thật (100%) và chiều cao trang trừ lề. */
+    body img, body svg, body video, body object, body canvas, body iframe {
+      max-width: 100% !important; max-height: ${fitH(contents)}px !important;
+      height: auto; object-fit: contain; box-sizing: border-box;
+    }
+    body svg[width="100%"], body svg[height="100%"] { width: 100% !important; height: ${fitH(contents)}px !important; }
+    /* Khối đặt bề rộng cố định (vd width:600px, min-width) → co theo trang */
+    /* Ảnh nằm trong đoạn có thụt đầu dòng → bị đẩy lố mép phải: bỏ thụt đầu dòng của đoạn chứa ảnh */
+    body p:has(img), body p:has(svg), body p:has(iframe), body div:has(> img):not(:has(p)) { text-indent: 0 !important; }
+    body * { max-width: 100% !important; min-width: 0 !important; box-sizing: border-box; }
+    body table { width: auto !important; table-layout: auto; }
+    body td, body th { word-break: break-word; }
+    /* Chữ dài không có chỗ ngắt (đường link, chuỗi gạch…) / đoạn "không xuống dòng" → tự xuống dòng */
+    body { overflow-wrap: break-word; word-wrap: break-word; }
+    body pre, body code, body [style*="nowrap"] { white-space: pre-wrap !important; }
+    /* Cột lồng trong cột phân trang làm trang lệch → bỏ */
+    body * { column-count: auto !important; column-width: auto !important; columns: auto !important; }
+    /* Hiệu ứng động tự chạy trong sách (hoa rơi, tim bay…) bắt máy vẽ lại liên tục → nóng máy */
+    *, *::before, *::after { animation: none !important; transition: none !important; }
   `;
+}
+// Chiều cao tối đa cho ảnh = chiều cao trang trừ lề trên/dưới của sách (để ảnh không bị cắt sang trang sau)
+function fitH(contents) {
+  try {
+    const win = contents.window, cs = win.getComputedStyle(contents.document.body);
+    const v = ['marginTop', 'marginBottom', 'paddingTop', 'paddingBottom'].reduce((s, k) => s + (parseFloat(cs[k]) || 0), 0);
+    return Math.max(120, Math.floor(win.innerHeight - v - 6));
+  } catch { return 600; }
 }
 
 function applyChrome() {
