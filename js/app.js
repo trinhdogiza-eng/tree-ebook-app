@@ -10,8 +10,9 @@ import {
 
 /* global ePub */
 const APP_VERSION = '2.12';
+const APP_BUILD = 46; // phải trùng số trong CACHE của sw.js ('epub-reader-v46') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
-$('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} · Tác giả: Trình Đỗ`;
+$('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const pctText = (p) => `${Math.round((p || 0) * 100)}%`;
 
@@ -1970,4 +1971,26 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   };
   navigator.serviceWorker.addEventListener('controllerchange', tryIsolate);
   setTimeout(tryIsolate, 1500);
+
+  // Tự nhận bản mới: app trên điện thoại thường chỉ "ngủ" rồi thức dậy chứ không mở lại từ đầu,
+  // nên mỗi lần app hiện lên lại thì hỏi máy chủ số bản mới nhất; có bản mới → tải lại app.
+  let updChecking = false, updShown = false;
+  const checkUpdate = async () => {
+    if (updChecking || !navigator.onLine) return;
+    updChecking = true;
+    try {
+      const txt = await (await fetch(`sw.js?u=${Date.now()}`, { cache: 'no-store' })).text();
+      const latest = Number((txt.match(/epub-reader-v(\d+)/) || [])[1]) || 0;
+      if (latest <= APP_BUILD) return;
+      navigator.serviceWorker.getRegistration().then((r) => r?.update()).catch(() => {});
+      // Mỗi bản chỉ tự tải lại 1 lần (máy chủ có lúc mới cập nhật 1 nửa → tránh tải lại liên tục)
+      if (!R.id && Number(lsGet('updTried', 0)) !== latest) { lsSet('updTried', latest); location.reload(); return; }
+      if (!updShown) { // đang đọc → không làm gián đoạn, hỏi trước
+        updShown = true;
+        toast(`Có bản cập nhật mới (${latest})`, 'Cập nhật', () => location.reload(), 15000);
+      }
+    } catch { /* không có mạng: bỏ qua */ } finally { updChecking = false; }
+  };
+  setTimeout(checkUpdate, 3000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkUpdate(); });
 }
