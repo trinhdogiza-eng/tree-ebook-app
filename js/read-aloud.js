@@ -612,8 +612,11 @@ const ORT_ESM = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.27.0/wasm/+esm';
 // Gói Piper cho onnxruntime chạy bằng TẤT CẢ nhân CPU (navigator.hardwareConcurrency). Trên Android khi khoá màn
 // hình, app bị dồn sang các nhân yếu → tạo giọng chiếm hết CPU, luồng phát âm thanh bị thiếu → tiếng rè rè.
 // Giới hạn số luồng và tắt chế độ "chờ quay vòng" (spinning) để luôn chừa CPU cho việc phát âm thanh.
-const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
-export const AI_THREADS = Math.max(1, Math.min(isAndroid ? 2 : 4, (navigator.hardwareConcurrency || 2) - 2));
+// Điện thoại (Android, iPhone/iPad): chỉ 1 luồng → chỉ 1 nhân CPU làm việc, máy mát hơn khi đọc lúc tắt màn hình
+// (tạo giọng chậm hơn, bù lại bằng việc tạo sẵn trước khi tắt màn hình — xem aiPrefetch).
+const isPhone = typeof navigator !== 'undefined' && (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+export const AI_THREADS = isPhone ? 1 : Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 2));
 async function tameOrt() {
   try {
     const m = await import(ORT_ESM);
