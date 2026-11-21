@@ -10,7 +10,7 @@ import {
 
 /* global ePub */
 const APP_VERSION = '2.12';
-const APP_BUILD = 46; // phải trùng số trong CACHE của sw.js ('epub-reader-v46') — tăng mỗi lần phát hành
+const APP_BUILD = 47; // phải trùng số trong CACHE của sw.js ('epub-reader-v47') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -628,6 +628,9 @@ function injectStyle(contents) {
     ::highlight(resume) { background-color: ${settings.theme === 'dark' ? 'rgba(110,170,255,.35)' : 'rgba(80,150,255,.28)'}; }
     ::highlight(tts) { background-color: ${settings.theme === 'dark' ? 'rgba(224,138,94,.38)' : 'rgba(255,196,0,.38)'}; }
     ${settings.fontFamily ? `body, body p, body div, body span, body li, body blockquote, body td, body h1, body h2, body h3, body h4 { font-family: ${settings.fontFamily} !important; }` : ''}
+    /* epub.js chia cột trên <body>; lề/đệm mà sách đặt cho <html> (vd html,body{padding:0 1.3em}) không được tính
+       → mọi trang bị đẩy lệch sang phải, mép trái lộ đuôi trang trước. Bỏ lề của <html>. */
+    html { padding: 0 !important; margin: 0 !important; border: 0 !important; }
     /* ---- Căn vừa trang trên mọi máy ----
        epub.js giới hạn ảnh bằng đúng bề rộng cột nhưng không trừ lề của sách → ảnh lố mép phải vài px,
        đẩy các trang sau lệch dần. Giới hạn theo khung chứa thật (100%) và chiều cao trang trừ lề. */
