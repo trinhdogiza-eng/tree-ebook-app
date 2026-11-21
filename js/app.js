@@ -10,7 +10,7 @@ import {
 
 /* global ePub */
 const APP_VERSION = '2.12';
-const APP_BUILD = 47; // phải trùng số trong CACHE của sw.js ('epub-reader-v47') — tăng mỗi lần phát hành
+const APP_BUILD = 48; // phải trùng số trong CACHE của sw.js ('epub-reader-v48') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
