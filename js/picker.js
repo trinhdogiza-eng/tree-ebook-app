@@ -75,7 +75,19 @@ export async function pickBooks(token, { library = false, email = '' } = {}) {
       resolve([]);
     };
     document.addEventListener('click', onOutside, true);
-    cleanup = () => document.removeEventListener('click', onOutside, true);
+    // Nút Back của điện thoại/trình duyệt → đóng khung chọn sách (không thoát khỏi app)
+    try { history.pushState({ ...(history.state || {}), picker: 1 }, ''); } catch { /* bỏ qua */ }
+    const onBack = () => {
+      cleanup();
+      try { picker.setVisible(false); picker.dispose(); } catch { /* bỏ qua */ }
+      resolve([]);
+    };
+    addEventListener('popstate', onBack);
+    cleanup = () => {
+      document.removeEventListener('click', onOutside, true);
+      removeEventListener('popstate', onBack);
+      if (history.state?.picker) history.back(); // bỏ mốc "đang chọn sách" khỏi lịch sử
+    };
   });
 }
 

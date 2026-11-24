@@ -283,6 +283,15 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
 dialog.tall { width: min(400px, calc(100vw - 48px)); }
 dialog.tall .dialog-body { max-height: min(480px, 58dvh); padding: 10px 10px 6px; gap: 6px; }
 dialog.tall .cloud-item { padding: 9px 6px; }
+/* Khung chọn sách của Google trên điện thoại: thu gọn, chừa lề 2 bên, nằm trên thanh dưới cùng */
+@media (max-width: 700px) {
+  .picker-dialog {
+    left: 14px !important; right: 14px !important; width: auto !important; top: auto !important;
+    bottom: calc(92px + env(safe-area-inset-bottom)) !important;
+    border: 0 !important; border-radius: 16px !important; overflow: hidden !important; box-shadow: 0 10px 40px rgba(0,0,0,.3) !important;
+  }
+  .picker-dialog-content { width: 100% !important; height: min(440px, calc(100dvh - 300px)) !important; }
+}
 .cloud-back {
   flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px 6px 8px; border-radius: 999px;
   border: 1px solid var(--line); background: var(--bg); color: var(--text); font-size: 14px; font-weight: 600; cursor: pointer;

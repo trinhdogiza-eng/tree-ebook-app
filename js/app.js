@@ -12,8 +12,8 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.20';
-const APP_BUILD = 56; // phải trùng số trong CACHE của sw.js ('epub-reader-v56') — tăng mỗi lần phát hành
+const APP_VERSION = '2.21';
+const APP_BUILD = 57; // phải trùng số trong CACHE của sw.js ('epub-reader-v57') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
