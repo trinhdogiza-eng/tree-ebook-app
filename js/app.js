@@ -12,8 +12,8 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.21';
-const APP_BUILD = 57; // phải trùng số trong CACHE của sw.js ('epub-reader-v57') — tăng mỗi lần phát hành
+const APP_VERSION = '2.22';
+const APP_BUILD = 58; // phải trùng số trong CACHE của sw.js ('epub-reader-v58') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -428,7 +428,7 @@ async function pickFromDrive(library) {
   }
   let docs;
   try {
-    docs = await pickBooks(await sync.accessToken(), { library, email: sync.currentUser()?.email });
+    docs = await pickBooks(await sync.accessToken(), { library, email: sync.currentUser()?.email, onBack: () => openDriveDialog(sync.currentUser()) });
   } catch (e) {
     console.error(e);
     toast(`Không mở được Google Drive: ${sync.errorText(e)}`);

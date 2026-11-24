@@ -22,7 +22,7 @@ function loadPicker() {
 }
 
 // Mở cửa sổ chọn sách → trả về [{ id, name, mimeType, parentId }] (mảng rỗng nếu người dùng đóng)
-export async function pickBooks(token, { library = false, email = '' } = {}) {
+export async function pickBooks(token, { library = false, email = '', onBack = null } = {}) {
   await loadPicker();
   const P = google.picker;
   const BOOK_MIMES = [
@@ -67,25 +67,45 @@ export async function pickBooks(token, { library = false, email = '' } = {}) {
     if (email) b.setAuthUser(email); // nhiều tài khoản Google trên trình duyệt → mở đúng tài khoản đã đăng nhập app
     const picker = b.build();
     picker.setVisible(true);
+    // close(back): đóng khung; back = true → quay về menu Google Drive của app (onBack)
+    let done = false;
+    const close = (back = false) => {
+      if (done) return;
+      done = true;
+      cleanup();
+      try { picker.setVisible(false); picker.dispose(); } catch { /* bỏ qua */ }
+      resolve([]);
+      if (back) onBack?.();
+    };
     // Chạm ra vùng tối bên ngoài cửa sổ chọn sách → đóng (giống bấm "Huỷ")
-    const onOutside = (e) => {
-      if (!e.target.closest?.('.picker-dialog-bg')) return;
-      cleanup();
-      try { picker.setVisible(false); picker.dispose(); } catch { /* bỏ qua */ }
-      resolve([]);
-    };
+    const onOutside = (e) => { if (e.target.closest?.('.picker-dialog-bg')) close(); };
     document.addEventListener('click', onOutside, true);
-    // Nút Back của điện thoại/trình duyệt → đóng khung chọn sách (không thoát khỏi app)
+    // Nút Back của điện thoại/trình duyệt → về menu Google Drive của app (không thoát khỏi app)
     try { history.pushState({ ...(history.state || {}), picker: 1 }, ''); } catch { /* bỏ qua */ }
-    const onBack = () => {
-      cleanup();
-      try { picker.setVisible(false); picker.dispose(); } catch { /* bỏ qua */ }
-      resolve([]);
+    const onPop = () => close(true);
+    addEventListener('popstate', onPop);
+    // Thanh tiêu đề giống menu Google Drive của app: "‹ Quay lại", tên mục, ✕
+    const head = document.createElement('div');
+    head.className = 'cloud-head tree-picker-head';
+    head.innerHTML = '<button type="button" class="cloud-back">‹ <span>Quay lại</span></button>'
+      + '<div class="cloud-path"><b></b><div class="sub">Chạm 2 lần để mở thư mục</div></div>'
+      + '<button type="button" class="icon" aria-label="Đóng">✕</button>';
+    head.querySelector('b').textContent = library && lib ? (cloudConfig.libraryName || 'Thư viện') : 'Google Drive';
+    head.querySelector('.cloud-back').onclick = () => close(true);
+    head.querySelector('.icon').onclick = () => close();
+    let tries = 0;
+    const attach = () => {
+      const dlg = document.querySelector('.picker-dialog');
+      if (done) return;
+      if (!dlg) { if (tries++ < 60) setTimeout(attach, 50); return; }
+      dlg.classList.add('tree-picker');
+      dlg.prepend(head);
     };
-    addEventListener('popstate', onBack);
+    attach();
     cleanup = () => {
       document.removeEventListener('click', onOutside, true);
-      removeEventListener('popstate', onBack);
+      removeEventListener('popstate', onPop);
+      head.remove();
       if (history.state?.picker) history.back(); // bỏ mốc "đang chọn sách" khỏi lịch sử
     };
   });
