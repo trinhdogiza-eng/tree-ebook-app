@@ -118,11 +118,61 @@ async function msToken(params) {
 }
 
 // Xử lý khi Microsoft/Google chuyển về app sau khi đăng nhập
+/* ---------- Chọn sách bằng trang Google toàn màn hình ("onepick") ----------
+   Safari (iPhone, iPad, Mac) chặn cookie của Google trong khung Picker nhúng → báo "Không thể truy cập vào
+   Tài khoản Google". Cách này mở trang chọn tệp của chính Google (drive.google.com), chọn xong Google chuyển
+   về app kèm picked_file_ids và 1 mã truy cập chỉ có quyền drive.file cho các tệp đó. */
+const K_ONEPICK = 'cloudOnePick';      // yêu cầu đang chờ { state, at }
+const K_PICKED = 'cloudPicked';        // kết quả chờ app xử lý { ids, token, expiresAt }
+export function startOnePick() {
+  const p = PROVIDERS.gdrive;
+  const state = rand(16);
+  lsSet(K_ONEPICK, { state, at: Date.now() });
+  const params = new URLSearchParams({
+    client_id: p.clientId(), redirect_uri: redirectUri(), response_type: 'token',
+    scope: 'https://www.googleapis.com/auth/drive.file', prompt: 'consent',
+    trigger_onepick: 'true', allow_multiple: 'true', state,
+  });
+  if (session?.provider === 'gdrive' && session.email) params.set('login_hint', session.email);
+  location.assign(`${p.authorize}?${params}`);
+  return new Promise(() => {}); // trang đang chuyển đi
+}
+// Lấy (một lần) các tệp vừa chọn ở trang Google → { ids: [...], token } hoặc null
+export function takePicked() {
+  const r = lsGet(K_PICKED);
+  lsDel(K_PICKED);
+  if (!r || Date.now() > r.expiresAt) return null;
+  return r;
+}
+function handleOnePick(q, h, state) {
+  const req = lsGet(K_ONEPICK);
+  if (!req || req.state !== state) return false;
+  lsDel(K_ONEPICK);
+  history.replaceState(null, '', redirectUri());
+  const ids = (h.get('picked_file_ids') || q.get('picked_file_ids') || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const token = h.get('access_token');
+  if (ids.length && token) {
+    lsSet(K_PICKED, { ids, token, expiresAt: Date.now() + (Number(h.get('expires_in') || 3600) - 120) * 1000 });
+  }
+  return true;
+}
+// Tải 1 tệp đã chọn ở trang Google (dùng mã truy cập Google trả kèm) → { name, mimeType, buf }
+export async function downloadPicked(fileId, token) {
+  const auth = { headers: { Authorization: `Bearer ${token}` } };
+  const metaRes = await fetch(`${GDRIVE}/files/${encodeURIComponent(fileId)}?fields=name,mimeType`, auth);
+  if (!metaRes.ok) throw new Error(`Không đọc được thông tin tệp (HTTP ${metaRes.status})`);
+  const meta = await metaRes.json();
+  const r = await fetch(`${GDRIVE}/files/${encodeURIComponent(fileId)}?alt=media`, auth);
+  if (!r.ok) throw new Error(`Không tải được tệp (HTTP ${r.status})`);
+  return { name: meta.name || 'sach', mimeType: meta.mimeType || '', buf: await r.arrayBuffer() };
+}
+
 async function handleRedirect() {
   const q = new URLSearchParams(location.search);
   const h = new URLSearchParams(location.hash.slice(1));
   const state = q.get('state') || h.get('state');
   if (!state) return;
+  if (handleOnePick(q, h, state)) return; // quay về từ trang chọn sách: giữ nguyên phiên đăng nhập
   const req = lsGet(K_AUTH);
   lsDel(K_AUTH);
   history.replaceState(null, '', redirectUri());

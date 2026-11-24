@@ -11,8 +11,8 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.14';
-const APP_BUILD = 50; // phải trùng số trong CACHE của sw.js ('epub-reader-v50') — tăng mỗi lần phát hành
+const APP_VERSION = '2.15';
+const APP_BUILD = 51; // phải trùng số trong CACHE của sw.js ('epub-reader-v51') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -307,14 +307,57 @@ function openDriveDialog(u) {
   $('libBox').hidden = !lib;
   document.querySelectorAll('#driveDialog .lib-name').forEach((el) => { el.textContent = cloudConfig.libraryName || 'thư viện'; });
   $('libOwner').textContent = cloudConfig.libraryOwner || 'chủ thư viện';
+  // Trang chọn sách toàn màn hình của Google không mở thẳng được thư mục thư viện → chỉ đường
+  $('pickHint').innerHTML = needsOnePick()
+    ? `Trang chọn tệp của Google sẽ mở ra. Sách của thư viện nằm ở thẻ <b>Được chia sẻ với tôi</b> → <b>${esc(cloudConfig.libraryName || 'thư viện')}</b> (hoặc gõ tên sách vào ô tìm kiếm). Chọn xong bấm <b>Chèn</b>.`
+    : 'Chọn một hoặc nhiều cuốn (EPUB, PDF, MOBI, AZW3) trong Drive của bạn, mục <b>Được chia sẻ với tôi</b> hoặc thư viện chung.';
   $('driveDialog').showModal();
 }
 // Trang đang "cô lập" (Chrome/Edge, để giọng AI chạy đa luồng) thì khung Google Picker bị chặn →
 // tải lại 1 lần ở chế độ thường (?chon-sach) rồi tự mở Picker.
 const K_PICK = 'pendingPick';
 let noIsolateNow = false;
+// Safari (iPhone/iPad/Mac, kể cả Chrome trên iPhone) chặn cookie của Google trong khung Picker nhúng
+// → dùng trang chọn sách toàn màn hình của Google (sync.startOnePick)
+const needsOnePick = () => {
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) return true;
+  return /Safari/.test(ua) && !/Chrome|Chromium|Edg|OPR|Firefox/.test(ua);
+};
+async function importPickedFiles({ ids, token }) {
+  let added = 0; let lastId = null;
+  for (const [i, fid] of ids.entries()) {
+    try {
+      toast(`Đang tải ${ids.length > 1 ? `${i + 1}/${ids.length} ` : ''}sách từ Google Drive…`, null, null, 0);
+      const { name, mimeType, buf } = await sync.downloadPicked(fid, token);
+      if (!/\.(epub|pdf|mobi|azw3|azw|prc|kf8)$/i.test(name) && !['application/epub+zip', 'application/pdf', ...KINDLE_MIME].includes(mimeType)
+        && !isPdfBuffer(buf) && !isKindleBuffer(buf)) {
+        toast(`Bỏ qua “${name}” — không phải sách EPUB, PDF, MOBI hoặc AZW3`, null, null, 4000);
+        await new Promise((r) => setTimeout(r, 1200));
+        continue;
+      }
+      const { id, isNew } = await importBuffer(buf, name, { provider: 'gdrive', id: fid });
+      sync.fileCategoryInfo(fid).then((c) => setCategory(id, c.name, c.main)).catch(() => {});
+      if (isNew) added++;
+      lastId = id;
+    } catch (e) {
+      console.error(e);
+      toast(`Không tải được sách: ${sync.errorText(e)}`, null, null, 6000);
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+  hideToast();
+  renderLibrary();
+  if (ids.length === 1 && lastId) openBook(lastId);
+  else if (ids.length > 1) toast(added ? `Đã thêm ${added} cuốn vào thư viện` : 'Các cuốn này đã có trong thư viện', null, null, 3000);
+}
 async function pickFromDrive(library) {
   $('driveDialog').close();
+  if (needsOnePick()) {
+    toast('Đang mở trang chọn sách của Google…', null, null, 0);
+    sync.startOnePick();
+    return;
+  }
   if (window.crossOriginIsolated) {
     try { sessionStorage.setItem(K_PICK, library ? 'lib' : 'mine'); } catch { /* bỏ qua */ }
     toast('Đang mở Google Drive…', null, null, 0);
@@ -2028,6 +2071,10 @@ sync.init(onUser).then(() => {
 }).catch((e) => {
   console.error('Không khởi tạo được đồng bộ', e);
   toast('Không kết nối được dịch vụ đồng bộ — đang dùng chế độ ngoại tuyến');
+}).finally(() => {
+  // Vừa quay về từ trang chọn sách của Google → tải và mở các cuốn đã chọn
+  const picked = sync.takePicked();
+  if (picked) importPickedFiles(picked);
 });
 
 // Biết sẵn giọng AI đã tải về máy chưa (để bấm 🔊 là dùng được ngay nếu chọn "giọng AI suốt")
