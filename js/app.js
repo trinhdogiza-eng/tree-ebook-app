@@ -12,8 +12,8 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.17';
-const APP_BUILD = 53; // phải trùng số trong CACHE của sw.js ('epub-reader-v53') — tăng mỗi lần phát hành
+const APP_VERSION = '2.18';
+const APP_BUILD = 54; // phải trùng số trong CACHE của sw.js ('epub-reader-v54') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -299,6 +299,11 @@ $('btnCloud').onclick = async () => {
   const u = sync.currentUser();
   if (!u || u.needsReconnect) { $('btnAccount').click(); return; } // chưa đăng nhập Drive → mở phần đăng nhập
   // Google Drive (quyền drive.file): chọn sách bằng Google Picker; còn quyền đọc cả Drive → duyệt trong app
+  if (u.provider === 'gdrive' && await sync.lacksDrive()) {
+    toast('Lúc đăng nhập bạn chưa tick ô cho phép Google Drive nên app chưa mở được sách. Bấm Cấp quyền rồi tick đủ các ô.',
+      'Cấp quyền', () => authAction(() => sync.grantDrive()), 15000);
+    return;
+  }
   if (u.provider === 'gdrive' && pickerReady() && !(await sync.hasFullDrive())) { openDriveDialog(u); return; }
   $('cloudDialog').showModal();
   if (!$('cloudList').children.length) showCloudFolder();
@@ -357,6 +362,7 @@ async function importPickedFiles({ ids, token }) {
 }
 async function pickFromDrive(library) {
   $('driveDialog').close();
+  if (inAppBrowser()) { toast('Google không cho chọn sách trong Zalo/Messenger/Facebook — hãy mở link bằng Safari hoặc Chrome', null, null, 8000); return; }
   if (needsOnePick()) {
     toast('Đang mở trang chọn sách của Google…', null, null, 0);
     // Thư viện: mở thẳng danh sách thể loại ("Ebook sách" đứng đầu để vẫn vào được thể loại mới thêm)
@@ -372,7 +378,7 @@ async function pickFromDrive(library) {
   }
   let docs;
   try {
-    docs = await pickBooks(await sync.accessToken(), { library });
+    docs = await pickBooks(await sync.accessToken(), { library, email: sync.currentUser()?.email });
   } catch (e) {
     console.error(e);
     toast(`Không mở được Google Drive: ${sync.errorText(e)}`);
@@ -2027,9 +2033,32 @@ $('btnAccount').onclick = () => {
 };
 $('deviceName').onchange = (e) => { deviceName = e.target.value.trim() || guessDeviceName(); lsSet('deviceName', deviceName); };
 
+// Trình duyệt nằm trong Zalo/Messenger/Facebook… → Google chặn đăng nhập ("Lỗi 403: disallowed_useragent")
+function inAppBrowser() {
+  const ua = navigator.userAgent;
+  if (/FBAN|FBAV|FB_IAB|FBIOS|Messenger|Instagram|Zalo|Line\/|MicroMessenger|KAKAOTALK|TikTok|musical_ly|Bytedance|Snapchat|Twitter|Pinterest|; wv\)/i.test(ua)) return true;
+  const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+  return /iPhone|iPad|iPod/.test(ua) && !/Safari\//.test(ua) && !standalone; // WebView của app khác trên iPhone
+}
+function inAppHelpHtml() {
+  const android = /Android/i.test(navigator.userAgent);
+  const url = location.origin + location.pathname;
+  const chrome = android ? ` <a href="intent://${location.host}${location.pathname}#Intent;scheme=https;package=com.android.chrome;end">Mở bằng Chrome</a>` : '';
+  return `Google không cho đăng nhập trong trình duyệt của Zalo, Messenger, Facebook… (lỗi 403).
+    Hãy mở <b>${esc(url)}</b> bằng <b>${android ? 'Chrome' : 'Safari'}</b>: bấm <b>⋯</b> ở góc màn hình → <b>Mở bằng trình duyệt</b>${android ? '' : ' / <b>Mở trong Safari</b>'}.${chrome}
+    <button type="button" class="link-btn" id="copyAppLink">Sao chép link</button>`;
+}
+document.addEventListener('click', (e) => {
+  if (e.target.id !== 'copyAppLink') return;
+  navigator.clipboard?.writeText(location.origin + location.pathname)
+    .then(() => { e.target.textContent = 'Đã sao chép ✓'; }, () => {});
+});
+if (inAppBrowser()) setTimeout(() => toast('Đang mở trong Zalo/Messenger/Facebook — muốn đăng nhập Google, hãy mở link bằng Safari hoặc Chrome', null, null, 9000), 1500);
+
 // Đăng nhập sẽ chuyển sang trang của Microsoft/Google rồi quay về app
 function authAction(fn) {
   $('authError').textContent = '';
+  if (inAppBrowser()) { $('authError').innerHTML = inAppHelpHtml(); return; }
   flushPush();
   Promise.resolve().then(fn).catch((e) => { $('authError').textContent = sync.errorText(e); });
 }

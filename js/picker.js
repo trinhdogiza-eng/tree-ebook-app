@@ -22,7 +22,7 @@ function loadPicker() {
 }
 
 // Mở cửa sổ chọn sách → trả về [{ id, name, mimeType, parentId }] (mảng rỗng nếu người dùng đóng)
-export async function pickBooks(token, { library = false } = {}) {
+export async function pickBooks(token, { library = false, email = '' } = {}) {
   await loadPicker();
   const P = google.picker;
   const BOOK_MIMES = [
@@ -64,6 +64,7 @@ export async function pickBooks(token, { library = false } = {}) {
     // Thư viện chung đứng đầu khi mở từ nút "Thư viện", còn lại thì Drive của tôi trước
     const views = library && lib ? [lib, mine, shared] : [mine, shared, lib].filter(Boolean);
     views.forEach((v) => b.addView(v));
+    if (email) b.setAuthUser(email); // nhiều tài khoản Google trên trình duyệt → mở đúng tài khoản đã đăng nhập app
     const picker = b.build();
     picker.setVisible(true);
     // Chạm ra vùng tối bên ngoài cửa sổ chọn sách → đóng (giống bấm "Huỷ")

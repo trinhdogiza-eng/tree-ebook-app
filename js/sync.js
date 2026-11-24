@@ -83,7 +83,7 @@ const ready = () => !!session && !needsReconnect;
 const announce = () => onUserChange(currentUser());
 
 /* ---------- đăng nhập ---------- */
-async function startAuth(provider, silent) {
+async function startAuth(provider, silent, consent = false) {
   const p = PROVIDERS[provider];
   const state = rand(16);
   const req = { provider, state, silent: !!silent, email: session?.provider === provider ? session.email : null };
@@ -100,6 +100,7 @@ async function startAuth(provider, silent) {
   }
   if (req.email) params.set('login_hint', req.email);
   if (silent) { params.set('prompt', 'none'); lsSet(K_BOUNCE, Date.now()); }
+  else if (consent) params.set('prompt', 'consent'); // hỏi lại từng quyền (người dùng từng bỏ tick ô Google Drive)
   else if (!req.email) params.set('prompt', 'select_account');
   lsSet(K_AUTH, req);
   location.assign(`${p.authorize}?${params}`);
@@ -219,17 +220,26 @@ export const accessToken = () => getToken();
 // Tài khoản còn quyền đọc cả Drive từ bản cũ (drive.readonly, nhờ include_granted_scopes) →
 // duyệt thư mục ngay trong app, không phải qua trang chọn tệp của Google.
 const FULL_DRIVE = /auth\/drive(\.readonly)?(\s|$)/;
-export async function hasFullDrive() {
-  if (session?.provider !== 'gdrive') return false;
+async function grantedScope() {
+  if (session?.provider !== 'gdrive') return null;
   if (session.scope == null) {
     try {
       const r = await fetch(`https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=${encodeURIComponent(await getToken())}`);
-      if (!r.ok) return false;
+      if (!r.ok) return null;
       session.scope = (await r.json()).scope || '';
       saveSession();
-    } catch { return false; }
+    } catch { return null; }
   }
-  return FULL_DRIVE.test(session.scope);
+  return session.scope;
+}
+export async function hasFullDrive() {
+  const s = await grantedScope();
+  return s != null && FULL_DRIVE.test(s);
+}
+// Trang xác nhận của Google cho bỏ tick từng quyền: thiếu quyền Drive thì khung chọn sách báo 403
+export async function lacksDrive() {
+  const s = await grantedScope();
+  return s != null && !/auth\/drive(\.file|\.readonly)?(\s|$)/.test(s);
 }
 
 async function getToken() {
@@ -288,6 +298,7 @@ const canBounce = () => Date.now() - (lsGet(K_BOUNCE) || 0) > 5 * 60 * 1000;
 
 export const signIn = (provider) => startAuth(provider, false);
 export const reconnect = () => session && startAuth(session.provider, false);
+export const grantDrive = () => startAuth('gdrive', false, true);
 export function signOut() {
   session = null; cache = null; gFileId = null; needsReconnect = false;
   saveSession(); lsDel(K_PENDING);
