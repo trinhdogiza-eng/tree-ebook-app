@@ -11,8 +11,8 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.13';
-const APP_BUILD = 49; // phải trùng số trong CACHE của sw.js ('epub-reader-v49') — tăng mỗi lần phát hành
+const APP_VERSION = '2.14';
+const APP_BUILD = 50; // phải trùng số trong CACHE của sw.js ('epub-reader-v50') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -329,6 +329,7 @@ async function pickFromDrive(library) {
     toast(`Không mở được Google Drive: ${sync.errorText(e)}`);
     return;
   }
+  if (!docs.length) return; // đóng cửa sổ chọn sách mà không chọn gì
   const books = docs.filter((d) => /\.(epub|pdf|mobi|azw3|azw|prc|kf8)$/i.test(d.name || '')
     || ['application/epub+zip', 'application/pdf', ...KINDLE_MIME].includes(d.mimeType));
   if (docs.length && !books.length) { toast('Tệp đã chọn không phải sách EPUB, PDF, MOBI hoặc AZW3'); return; }
@@ -1887,6 +1888,10 @@ document.addEventListener('pointerdown', (e) => {
   if (open.some((id) => $(id).contains(e.target))) return;
   if (e.target.closest?.('#btnToc, #btnSettings')) return; // nút mở/đóng tự xử lý
   open.forEach((id) => { $(id).hidden = true; });
+}, true);
+// Thông báo nhỏ ở đáy màn hình: chạm vào chỗ khác → tắt (nút trong thông báo vẫn bấm được)
+document.addEventListener('pointerdown', (e) => {
+  if (!$('toast').hidden && !$('toast').contains(e.target)) hideToast();
 }, true);
 // Mọi hộp thoại (Đồng bộ, Google Drive…): chạm ra vùng tối bên ngoài khung → đóng
 for (const dlg of document.querySelectorAll('dialog')) {

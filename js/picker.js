@@ -39,10 +39,12 @@ export async function pickBooks(token, { library = false } = {}) {
   };
   const lib = cloudConfig.libraryFolderId
     ? view(cloudConfig.libraryName || 'Thư viện', (v) => v.setParent(cloudConfig.libraryFolderId)) : null;
-  const mine = view('Drive của tôi', (v) => v.setParent('root'));
+  // Không dùng setParent('root') hay setOwnedByMe(true): cả hai làm danh sách trống (đã thử 25/11/2026)
+  const mine = view('Drive của tôi', () => {});
   const shared = view('Được chia sẻ với tôi', (v) => v.setOwnedByMe(false));
 
   return new Promise((resolve) => {
+    let cleanup = () => {};
     const b = new P.PickerBuilder()
       .setOAuthToken(token)
       .setDeveloperKey(cloudConfig.googleApiKey)
@@ -52,6 +54,7 @@ export async function pickBooks(token, { library = false } = {}) {
       .enableFeature(P.Feature.MULTISELECT_ENABLED)
       .setCallback((data) => {
         const action = data[P.Response.ACTION];
+        if (action === P.Action.PICKED || action === P.Action.CANCEL) cleanup();
         if (action === P.Action.PICKED) {
           resolve((data[P.Response.DOCUMENTS] || []).map((d) => ({
             id: d[P.Document.ID], name: d[P.Document.NAME], mimeType: d[P.Document.MIME_TYPE], parentId: d[P.Document.PARENT_ID],
@@ -61,7 +64,17 @@ export async function pickBooks(token, { library = false } = {}) {
     // Thư viện chung đứng đầu khi mở từ nút "Thư viện", còn lại thì Drive của tôi trước
     const views = library && lib ? [lib, mine, shared] : [mine, shared, lib].filter(Boolean);
     views.forEach((v) => b.addView(v));
-    b.build().setVisible(true);
+    const picker = b.build();
+    picker.setVisible(true);
+    // Chạm ra vùng tối bên ngoài cửa sổ chọn sách → đóng (giống bấm "Huỷ")
+    const onOutside = (e) => {
+      if (!e.target.closest?.('.picker-dialog-bg')) return;
+      cleanup();
+      try { picker.setVisible(false); picker.dispose(); } catch { /* bỏ qua */ }
+      resolve([]);
+    };
+    document.addEventListener('click', onOutside, true);
+    cleanup = () => document.removeEventListener('click', onOutside, true);
   });
 }
 
