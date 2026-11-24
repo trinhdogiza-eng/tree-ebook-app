@@ -12,8 +12,8 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.22';
-const APP_BUILD = 58; // phải trùng số trong CACHE của sw.js ('epub-reader-v58') — tăng mỗi lần phát hành
+const APP_VERSION = '2.23';
+const APP_BUILD = 59; // phải trùng số trong CACHE của sw.js ('epub-reader-v59') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -246,7 +246,8 @@ async function downloadAndOpen(fileId, name, expectedId) {
 
 /* ----- Trình duyệt tệp trên đám mây ----- */
 const K_CLOUDNAV = 'cloudNav';
-const cloudNav = { stack: lsGet(K_CLOUDNAV, null) || [] }; // [{ id, name }] — nhớ thư mục đang xem lần trước
+const K_CATNAV = 'catalogNav';
+const cloudNav = { stack: lsGet(K_CLOUDNAV, null) || [], catalog: false }; // [{ id, name }] — nhớ thư mục đang xem lần trước
 // Danh sách thư mục đã xem: hiện ngay từ bộ nhớ, tải lại ngầm trên Drive rồi cập nhật
 const K_CLOUDCACHE = 'cloudCache';
 const cloudCache = new Map(Object.entries(lsGet(K_CLOUDCACHE, {}) || {}));
@@ -256,10 +257,89 @@ function cacheList(key, items) {
   while (cloudCache.size > 60) cloudCache.delete(cloudCache.keys().next().value); // giữ 60 thư mục gần nhất
   lsSet(K_CLOUDCACHE, Object.fromEntries(cloudCache));
 }
+/* ----- Danh mục thư viện công khai: người dùng khác duyệt thư viện ngay trong app (không qua trang Google) ----- */
+const K_CATALOG = 'libCatalog';
+let catalog = null;
+let catalogLoading = null;
+const MY_DRIVE = '__mydrive';
+function catalogReady() { return !!cloudConfig.catalogFileId && !!cloudConfig.googleApiKey; }
+async function loadCatalog(force = false) {
+  if (!catalog) { try { catalog = JSON.parse(localStorage.getItem(K_CATALOG) || 'null'); } catch { catalog = null; } }
+  const stale = !catalog || Date.now() - (catalog.fetchedAt || 0) > 60 * 60 * 1000;
+  if (catalog && !stale && !force) return catalog;
+  catalogLoading ||= sync.fetchCatalog(cloudConfig.catalogFileId, cloudConfig.googleApiKey).then((c) => {
+    c.fetchedAt = Date.now();
+    catalog = c;
+    try { localStorage.setItem(K_CATALOG, JSON.stringify(c)); } catch { /* bộ nhớ đầy: vẫn dùng trong phiên */ }
+    return c;
+  }).finally(() => { catalogLoading = null; });
+  if (catalog) { catalogLoading.catch(() => {}); return catalog; } // có bản cũ: dùng ngay, cập nhật ngầm
+  return catalogLoading;
+}
+// Thư mục trong danh mục → danh sách mục (thư mục trước, sách sau)
+function catalogList(c, folderId) {
+  const idx = folderId ? c.f.findIndex((f) => f[0] === folderId) : -1;
+  const count = new Map();
+  for (const b of c.b) count.set(b[3], (count.get(b[3]) || 0) + 1);
+  const folders = c.f.map((f, i) => [f, i]).filter(([f]) => f[2] === idx)
+    .map(([f, i]) => ({ id: f[0], name: f[1], isFolder: true, icon: idx === -1 ? '🏷️' : '📁', note: count.get(i) ? `${count.get(i)} cuốn` : '' }));
+  const books = c.b.filter((b) => b[3] === idx).map(catalogBook(c));
+  const by = (a, b) => a.name.localeCompare(b.name, 'vi', { numeric: true });
+  return [...folders.sort(by), ...books.sort(by)];
+}
+const catalogBook = (c) => (b) => ({ id: b[0], name: b[1], size: b[2], pub: true, rk: b[4] || '', cat: c.f[b[3]]?.[1] || '' });
+function catalogSearch(c, q) {
+  const norm = (t) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
+  const words = norm(q).split(/\s+/).filter(Boolean);
+  return c.b.filter((b) => { const n = norm(b[1]); return words.every((w) => n.includes(w)); })
+    .slice(0, 300).map(catalogBook(c));
+}
+async function downloadAndOpenPublic(it) {
+  try {
+    toast(`Đang tải “${it.name}”…`, null, null, 0);
+    const buf = await sync.downloadPublic(it.id, cloudConfig.googleApiKey, it.rk);
+    const fileName = /\.(epub|pdf)$/i.test(it.name) || KINDLE_EXT.test(it.name) ? it.name
+      : `${it.name}${isPdfBuffer(buf) ? '.pdf' : isKindleBuffer(buf) ? '.mobi' : '.epub'}`;
+    const { id } = await importBuffer(buf, fileName, { provider: 'gdrive', id: it.id });
+    if (it.cat) setCategory(id, it.cat, true);
+    hideToast();
+    $('cloudDialog').close();
+    openBook(id);
+  } catch (e) {
+    console.error(e);
+    toast(`Không tải được: ${sync.errorText(e)}`, null, null, 6000);
+  }
+}
+// Chủ thư viện: lập lại danh mục (tối đa 6 giờ/lần) để người khác thấy sách mới
+async function refreshCatalogAsOwner(force = false) {
+  if (!cloudConfig.libraryFolderId || !(await sync.hasFullDrive())) return;
+  if (!force && Date.now() - lsGet('catalogBuiltAt', 0) < 6 * 60 * 60 * 1000) return;
+  lsSet('catalogBuiltAt', Date.now());
+  try {
+    const c = await sync.buildCatalog(cloudConfig.libraryFolderId);
+    const fileId = await sync.saveCatalog(c, cloudConfig.libraryFolderId);
+    console.info(`Danh mục thư viện: ${c.f.length} thư mục, ${c.b.length} cuốn → tệp ${fileId}`);
+    return { ...c, fileId };
+  } catch (e) {
+    lsSet('catalogBuiltAt', 0);
+    console.warn('Không lập được danh mục thư viện', e);
+    return null;
+  }
+}
+window.treeRefreshCatalog = () => refreshCatalogAsOwner(true);
+
 async function showCloudFolder() {
   cloudNav.searching = false;
-  lsSet(K_CLOUDNAV, cloudNav.stack);
+  lsSet(cloudNav.catalog ? K_CATNAV : K_CLOUDNAV, cloudNav.stack);
   const cur = cloudNav.stack[cloudNav.stack.length - 1];
+  if (cloudNav.catalog) {
+    $('cloudTitle').textContent = cur ? cur.name : (cloudConfig.libraryName || 'Thư viện');
+    $('cloudPath').textContent = cloudNav.stack.length ? ['…', ...cloudNav.stack.map((s) => s.name)].slice(-3).join(' / ') : `${cloudConfig.libraryOwner ? `của ${cloudConfig.libraryOwner}` : ''}`;
+    $('cloudUp').querySelector('span').textContent = cloudNav.stack.length ? 'Quay lại' : 'Đóng';
+    const mine = !cur ? [{ id: MY_DRIVE, name: 'Sách trong Google Drive của bạn', isFolder: true, icon: '☁️', note: 'chọn tệp' }] : [];
+    await loadCloudItems(async () => [...mine, ...catalogList(await loadCatalog(), cur?.id || null)]);
+    return;
+  }
   $('cloudTitle').textContent = cur ? cur.name : sync.currentUser().providerName;
   $('cloudPath').textContent = cloudNav.stack.length ? ['…', ...cloudNav.stack.map((s) => s.name)].slice(-3).join(' / ') : 'Thư mục gốc';
   $('cloudUp').querySelector('span').textContent = cloudNav.stack.length ? 'Quay lại' : 'Đóng'; // ở thư mục gốc: nút này đóng menu
@@ -303,9 +383,9 @@ function renderCloudItems(items, have) {
       const size = it.isFolder ? esc(it.note || '') : have.has(it.id) ? 'Đã có' : `${(it.size / 1048576).toFixed(1)} MB`;
       const cat = it.cat ? `<small class="cloud-cat">${esc(it.cat)}</small>` : '';
       b.innerHTML = `<span class="ic">${it.icon || (it.isFolder ? '📁' : /\.pdf$/i.test(it.name) ? '📄' : '📖')}</span><span class="nm">${esc(it.name)}${cat}</span><span class="sz">${size}</span>`;
-      b.onclick = it.isFolder
-        ? () => { cloudNav.stack.push({ id: it.id, name: it.name }); $('cloudSearch').value = ''; showCloudFolder(); }
-        : () => downloadAndOpen(it.id, it.name);
+      b.onclick = it.id === MY_DRIVE ? () => { $('cloudDialog').close(); openDriveDialog(sync.currentUser()); }
+        : it.isFolder ? () => { cloudNav.stack.push({ id: it.id, name: it.name }); $('cloudSearch').value = ''; showCloudFolder(); }
+          : it.pub ? () => downloadAndOpenPublic(it) : () => downloadAndOpen(it.id, it.name);
       list.appendChild(b);
     }
   }
@@ -329,6 +409,8 @@ $('btnCloud').onclick = async () => {
   const u = sync.currentUser();
   if (!u || u.needsReconnect) { $('btnAccount').click(); return; } // chưa đăng nhập Drive → mở phần đăng nhập
   // Google Drive (quyền drive.file): chọn sách bằng Google Picker; còn quyền đọc cả Drive → duyệt trong app
+  // Người dùng khác (không có quyền đọc cả Drive): duyệt thư viện bằng danh mục công khai, không qua trang Google
+  if (u.provider === 'gdrive' && catalogReady() && !(await sync.hasFullDrive())) { openCloudBrowser(u, true); return; }
   if (u.provider === 'gdrive' && await sync.lacksDrive()) {
     toast('App chưa có quyền Google Drive — bấm Cấp quyền, tick đủ các ô',
       'Cấp quyền', () => authAction(() => sync.grantDrive()), 15000);
@@ -339,8 +421,12 @@ $('btnCloud').onclick = async () => {
 };
 // Mở trình duyệt Drive trong app: lần đầu vào thẳng thư viện, sau đó mở lại đúng thư mục đang xem.
 // Nút Back của điện thoại/trình duyệt: lùi 1 thư mục, ở thư mục gốc thì đóng.
-function openCloudBrowser(u) {
-  if (lsGet(K_CLOUDNAV, null) == null && u.provider === 'gdrive' && cloudConfig.libraryFolderId) {
+function openCloudBrowser(u, useCatalog = false) {
+  if (useCatalog !== cloudNav.catalog) {
+    cloudNav.catalog = useCatalog;
+    cloudNav.stack = lsGet(useCatalog ? K_CATNAV : K_CLOUDNAV, null) || [];
+  }
+  if (!useCatalog && lsGet(K_CLOUDNAV, null) == null && u.provider === 'gdrive' && cloudConfig.libraryFolderId) {
     cloudNav.stack = [{ id: cloudConfig.libraryFolderId, name: cloudConfig.libraryName || 'Thư viện' }];
   }
   $('cloudDialog').showModal();
@@ -481,6 +567,7 @@ $('cloudSearchForm').onsubmit = (e) => {
   $('cloudPath').textContent = sync.currentUser().providerName;
   $('cloudUp').querySelector('span').textContent = 'Quay lại';
   cloudNav.searching = true;
+  if (cloudNav.catalog) { $('cloudPath').textContent = cloudConfig.libraryName || 'Thư viện'; loadCloudItems(async () => catalogSearch(await loadCatalog(), q)); return; }
   loadCloudItems(() => sync.search(q));
 };
 
@@ -2170,6 +2257,8 @@ sync.init(onUser).then(() => {
   // Vừa quay về từ trang chọn sách của Google → tải và mở các cuốn đã chọn
   const picked = sync.takePicked();
   if (picked) importPickedFiles(picked);
+  // Chủ thư viện: cập nhật danh mục công khai cho người khác (chạy ngầm)
+  if (sync.currentUser()?.provider === 'gdrive') setTimeout(() => refreshCatalogAsOwner(), 8000);
 });
 
 // Biết sẵn giọng AI đã tải về máy chưa (để bấm 🔊 là dùng được ngay nếu chọn "giọng AI suốt")

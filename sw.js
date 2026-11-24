@@ -1,5 +1,5 @@
 ﻿// Service worker: lưu sẵn giao diện và thư viện để app mở được khi không có mạng.
-const CACHE = 'epub-reader-v58';
+const CACHE = 'epub-reader-v59';
 const SHELL = [
   './', 'index.html', 'css/style.css', 'js/app.js', 'js/db.js', 'js/sync.js', 'js/cloud-config.js', 'js/pdf-reader.js', 'js/read-aloud.js', 'js/mobi-convert.js', 'js/picker.js', 'js/library-categories.js',
   'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png',
@@ -9,7 +9,7 @@ const SHELL = [
 const CDN_HOSTS = ['cdn.jsdelivr.net'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {

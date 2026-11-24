@@ -19,4 +19,8 @@ export const cloudConfig = {
   libraryFolderId: '1rPfRcFT2DYGQMuNldWlIkX6J_9QnhOQ5',
   libraryName: 'Thư viện Tree Ebook',
   libraryOwner: 'Trình Đỗ',
+  // Danh mục thư viện (tệp tree-ebook-danh-muc.json trong "Ebook sách", app của chủ thư viện tự cập nhật 6 giờ/lần).
+  // Người khác đọc danh mục + tải sách bằng googleApiKey → thư mục phải để "Ai có link đều xem được"
+  // và API key phải được phép dùng Google Drive API.
+  catalogFileId: '1l-ADcTYj4gh1i83F2T2DmuhhyGCA9DUa',
 };

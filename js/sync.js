@@ -137,6 +137,9 @@ export function startOnePick({ folderId = '' } = {}) {
     trigger_onepick: 'true', allow_multiple: 'true', state,
   });
   if (folderId) params.set('file_ids', folderId);
+  // Chỉ hiện sách + thư mục (không lẫn Excel, video, ảnh…) — đã thử 24/11/2026: Google nhận tham số "mimetypes"
+  params.set('mimetypes', ['application/epub+zip', 'application/pdf', 'application/x-mobipocket-ebook', 'application/vnd.amazon.ebook',
+    'application/vnd.amazon.mobi8-ebook', 'application/octet-stream', 'application/vnd.google-apps.folder'].join(','));
   if (session?.provider === 'gdrive' && session.email) params.set('login_hint', session.email);
   location.assign(`${p.authorize}?${params}`);
   return new Promise(() => {}); // trang đang chuyển đi
@@ -647,6 +650,86 @@ export async function download(fileId) {
     : `${GDRIVE}/files/${fileId}?alt=media`;
   return (await apiOk(url)).arrayBuffer();
 }
+
+/* ---------- Danh mục thư viện công khai (thư mục "Ebook sách" để "Ai có link đều xem được") ----------
+ * Chủ thư viện (còn quyền đọc cả Drive) lập danh mục: mọi thư mục + sách trong thư viện, lưu thành 1 tệp JSON
+ * trong chính thư mục thư viện. Người khác đọc danh mục và tải sách bằng API key, không cần trang chọn tệp của Google.
+ * Định dạng: { v: 1, at, root, f: [[id, tên, chỉ số thư mục cha (-1 = gốc)]], b: [[id, tên, cỡ, chỉ số thư mục, resourceKey?]] }
+ */
+export const CATALOG_NAME = 'tree-ebook-danh-muc.json';
+async function gList(q, fields) {
+  const out = [];
+  let token = '';
+  for (let page = 0; page < 50; page++) {
+    const params = new URLSearchParams({ q, fields: `files(${fields}),nextPageToken`, pageSize: '1000', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true' });
+    if (token) params.set('pageToken', token);
+    const j = await (await apiOk(`${GDRIVE}/files?${params}`)).json();
+    out.push(...(j.files || []));
+    token = j.nextPageToken;
+    if (!token) break;
+  }
+  return out;
+}
+export async function buildCatalog(rootId) {
+  const folders = [];               // [id, name, parentIdx]
+  const index = new Map([[rootId, -1]]);
+  const books = [];
+  let level = [rootId];
+  while (level.length) {
+    const next = [];
+    for (let i = 0; i < level.length; i += 40) {
+      const ids = level.slice(i, i + 40);
+      const q = `(${ids.map((id) => `'${id}' in parents`).join(' or ')}) and trashed=false`;
+      for (const f of await gList(q, 'id,name,mimeType,size,parents,resourceKey')) {
+        const parent = index.get((f.parents || []).find((p) => index.has(p)));
+        if (parent === undefined) continue;
+        if (f.mimeType === 'application/vnd.google-apps.folder') {
+          if (index.has(f.id)) continue;
+          index.set(f.id, folders.length);
+          folders.push([f.id, f.name, parent]);
+          next.push(f.id);
+        } else if (isBook(f.name, f.mimeType) && f.name !== CATALOG_NAME) {
+          books.push(f.resourceKey ? [f.id, f.name, Number(f.size) || 0, parent, f.resourceKey] : [f.id, f.name, Number(f.size) || 0, parent]);
+        }
+      }
+    }
+    level = next;
+  }
+  return { v: 1, at: Date.now(), root: rootId, f: folders, b: books };
+}
+// Lưu danh mục vào thư mục thư viện (tạo mới lần đầu, sau đó ghi đè cùng tệp) → trả về mã tệp
+export async function saveCatalog(catalog, rootId) {
+  const body = JSON.stringify(catalog);
+  const existing = (await gList(`'${rootId}' in parents and name='${CATALOG_NAME}' and trashed=false`, 'id'))[0];
+  if (existing) {
+    await apiOk(`https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=media`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body,
+    });
+    return existing.id;
+  }
+  const boundary = `tree${rand(8)}`;
+  const meta = JSON.stringify({ name: CATALOG_NAME, parents: [rootId], mimeType: 'application/json' });
+  const multipart = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${boundary}--`;
+  const r = await apiOk('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+    method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body: multipart,
+  });
+  return (await r.json()).id;
+}
+// Người dùng khác: đọc tệp công khai bằng API key (không cần đăng nhập)
+async function publicFetch(fileId, apiKey, resourceKey) {
+  const headers = resourceKey ? { 'X-Goog-Drive-Resource-Keys': `${fileId}/${resourceKey}` } : {};
+  const r = await fetch(`${GDRIVE}/files/${encodeURIComponent(fileId)}?alt=media&key=${encodeURIComponent(apiKey)}`, { headers });
+  if (!r.ok) {
+    let msg = `HTTP ${r.status}`;
+    try { const j = await r.json(); msg = j.error?.message || msg; } catch { /* bỏ qua */ }
+    if (r.status === 403 && /quota|limit|rate/i.test(msg)) msg = 'Sách này đang bị Google giới hạn lượt tải — thử lại sau ít giờ';
+    else if (r.status === 404 || r.status === 403) msg = 'Thư viện chưa mở công khai hoặc tệp đã bị xoá';
+    const err = new Error(msg); err.status = r.status; throw err;
+  }
+  return r;
+}
+export const fetchCatalog = async (fileId, apiKey) => (await publicFetch(fileId, apiKey)).json();
+export const downloadPublic = async (fileId, apiKey, resourceKey) => (await publicFetch(fileId, apiKey, resourceKey)).arrayBuffer();
 
 export function errorText(e) {
   if (e?.code === 'need-auth') return 'Phiên đăng nhập đã hết hạn — bấm "Kết nối lại".';
