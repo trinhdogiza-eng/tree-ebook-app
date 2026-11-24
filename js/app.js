@@ -12,8 +12,8 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.19';
-const APP_BUILD = 55; // phải trùng số trong CACHE của sw.js ('epub-reader-v55') — tăng mỗi lần phát hành
+const APP_VERSION = '2.20';
+const APP_BUILD = 56; // phải trùng số trong CACHE của sw.js ('epub-reader-v56') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -257,11 +257,12 @@ function cacheList(key, items) {
   lsSet(K_CLOUDCACHE, Object.fromEntries(cloudCache));
 }
 async function showCloudFolder() {
+  cloudNav.searching = false;
   lsSet(K_CLOUDNAV, cloudNav.stack);
   const cur = cloudNav.stack[cloudNav.stack.length - 1];
   $('cloudTitle').textContent = cur ? cur.name : sync.currentUser().providerName;
   $('cloudPath').textContent = cloudNav.stack.length ? ['…', ...cloudNav.stack.map((s) => s.name)].slice(-3).join(' / ') : 'Thư mục gốc';
-  $('cloudUp').style.visibility = cloudNav.stack.length ? 'visible' : 'hidden';
+  $('cloudUp').querySelector('span').textContent = cloudNav.stack.length ? 'Quay lại' : 'Đóng'; // ở thư mục gốc: nút này đóng menu
   // Gốc Google Drive: thư viện chung đứng đầu để vào thẳng kho sách
   const lib = !cur && sync.currentUser().provider === 'gdrive' && cloudConfig.libraryFolderId
     ? [{ id: cloudConfig.libraryFolderId, name: cloudConfig.libraryName || 'Thư viện', isFolder: true, icon: '🌳', note: 'kho sách' }] : [];
@@ -469,14 +470,17 @@ $('drivePick').onclick = () => pickFromDrive(false);
 $('libOpen').onclick = () => pickFromDrive(true);
 $('libRequest').onclick = () => window.open(libraryUrl(), '_blank', 'noopener');
 $('cloudClose').onclick = () => $('cloudDialog').close();
-$('cloudUp').onclick = () => { cloudNav.stack.pop(); showCloudFolder(); };
+$('cloudUp').onclick = () => {
+  if (cloudNav.searching) { $('cloudSearch').value = ''; showCloudFolder(); return; } // thoát kết quả tìm
+  if (!cloudNav.stack.length) { $('cloudDialog').close(); return; } cloudNav.stack.pop(); showCloudFolder(); };
 $('cloudSearchForm').onsubmit = (e) => {
   e.preventDefault();
   const q = $('cloudSearch').value.trim();
   if (!q) { showCloudFolder(); return; }
   $('cloudTitle').textContent = `Tìm “${q}”`;
   $('cloudPath').textContent = sync.currentUser().providerName;
-  $('cloudUp').style.visibility = 'hidden';
+  $('cloudUp').querySelector('span').textContent = 'Quay lại';
+  cloudNav.searching = true;
   loadCloudItems(() => sync.search(q));
 };
 

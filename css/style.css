@@ -280,8 +280,14 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
 
 /* ---------- Duyệt đám mây ---------- */
 /* Gọn như hộp Google Drive: cao vừa đủ danh sách, tối đa ~70% màn hình */
-dialog.tall { width: min(460px, calc(100vw - 32px)); }
-dialog.tall .dialog-body { max-height: min(560px, 70dvh); padding: 12px 12px 8px; gap: 8px; }
+dialog.tall { width: min(400px, calc(100vw - 48px)); }
+dialog.tall .dialog-body { max-height: min(480px, 58dvh); padding: 10px 10px 6px; gap: 6px; }
+dialog.tall .cloud-item { padding: 9px 6px; }
+.cloud-back {
+  flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px 6px 8px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text); font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.cloud-back:active { filter: brightness(.93); }
 dialog.tall .cloud-list { flex: 1 1 auto; min-height: 0; }
 .cloud-head { display: flex; align-items: center; gap: 4px; }
 .cloud-path { flex: 1; min-width: 0; }
