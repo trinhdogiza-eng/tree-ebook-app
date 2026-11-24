@@ -279,8 +279,10 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
 .plogo.gd { background: conic-gradient(#0f9d58 0 33%, #f4b400 0 66%, #4285f4 0); }
 
 /* ---------- Duyệt đám mây ---------- */
-dialog.tall { width: min(560px, calc(100vw - 24px)); }
-dialog.tall .dialog-body { height: min(640px, calc(100dvh - 48px)); padding: 12px 12px 8px; gap: 8px; }
+/* Gọn như hộp Google Drive: cao vừa đủ danh sách, tối đa ~70% màn hình */
+dialog.tall { width: min(460px, calc(100vw - 32px)); }
+dialog.tall .dialog-body { max-height: min(560px, 70dvh); padding: 12px 12px 8px; gap: 8px; }
+dialog.tall .cloud-list { flex: 1 1 auto; min-height: 0; }
 .cloud-head { display: flex; align-items: center; gap: 4px; }
 .cloud-path { flex: 1; min-width: 0; }
 .cloud-path > * { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
