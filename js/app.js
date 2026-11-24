@@ -12,8 +12,8 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.16';
-const APP_BUILD = 52; // phải trùng số trong CACHE của sw.js ('epub-reader-v52') — tăng mỗi lần phát hành
+const APP_VERSION = '2.17';
+const APP_BUILD = 53; // phải trùng số trong CACHE của sw.js ('epub-reader-v53') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -251,7 +251,10 @@ async function showCloudFolder() {
   $('cloudTitle').textContent = cur ? cur.name : sync.currentUser().providerName;
   $('cloudPath').textContent = cloudNav.stack.length ? ['…', ...cloudNav.stack.map((s) => s.name)].slice(-3).join(' / ') : 'Thư mục gốc';
   $('cloudUp').style.visibility = cloudNav.stack.length ? 'visible' : 'hidden';
-  await loadCloudItems(() => sync.listFolder(cur?.id || null));
+  // Gốc Google Drive: thư viện chung đứng đầu để vào thẳng kho sách
+  const lib = !cur && sync.currentUser().provider === 'gdrive' && cloudConfig.libraryFolderId
+    ? [{ id: cloudConfig.libraryFolderId, name: cloudConfig.libraryName || 'Thư viện', isFolder: true, icon: '🌳', note: 'kho sách' }] : [];
+  await loadCloudItems(async () => [...lib, ...(await sync.listFolder(cur?.id || null))]);
 }
 async function loadCloudItems(loader) {
   const list = $('cloudList');
@@ -292,11 +295,11 @@ function setLibTab(tab) {
 $('dockHome').onclick = () => setLibTab('home');
 $('dockRemote').onclick = () => setLibTab('remote');
 
-$('btnCloud').onclick = () => {
+$('btnCloud').onclick = async () => {
   const u = sync.currentUser();
   if (!u || u.needsReconnect) { $('btnAccount').click(); return; } // chưa đăng nhập Drive → mở phần đăng nhập
-  // Google Drive (quyền drive.file): chọn sách bằng Google Picker
-  if (u.provider === 'gdrive' && pickerReady()) { openDriveDialog(u); return; }
+  // Google Drive (quyền drive.file): chọn sách bằng Google Picker; còn quyền đọc cả Drive → duyệt trong app
+  if (u.provider === 'gdrive' && pickerReady() && !(await sync.hasFullDrive())) { openDriveDialog(u); return; }
   $('cloudDialog').showModal();
   if (!$('cloudList').children.length) showCloudFolder();
 };

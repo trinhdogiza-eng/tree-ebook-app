@@ -192,7 +192,7 @@ async function handleRedirect() {
     if (req.provider === 'onedrive') {
       s = await msToken({ grant_type: 'authorization_code', code: q.get('code'), redirect_uri: redirectUri(), code_verifier: req.verifier });
     } else {
-      s = { accessToken: h.get('access_token'), expiresAt: Date.now() + (Number(h.get('expires_in') || 3600) - 120) * 1000 };
+      s = { accessToken: h.get('access_token'), scope: h.get('scope') || null, expiresAt: Date.now() + (Number(h.get('expires_in') || 3600) - 120) * 1000 };
     }
     if (session && session.provider !== req.provider) gFileId = null;
     session = { provider: req.provider, email: req.email, ...s };
@@ -215,6 +215,22 @@ async function fetchEmail() {
 
 // Token đăng nhập hiện tại (dùng cho Google Picker)
 export const accessToken = () => getToken();
+
+// Tài khoản còn quyền đọc cả Drive từ bản cũ (drive.readonly, nhờ include_granted_scopes) →
+// duyệt thư mục ngay trong app, không phải qua trang chọn tệp của Google.
+const FULL_DRIVE = /auth\/drive(\.readonly)?(\s|$)/;
+export async function hasFullDrive() {
+  if (session?.provider !== 'gdrive') return false;
+  if (session.scope == null) {
+    try {
+      const r = await fetch(`https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=${encodeURIComponent(await getToken())}`);
+      if (!r.ok) return false;
+      session.scope = (await r.json()).scope || '';
+      saveSession();
+    } catch { return false; }
+  }
+  return FULL_DRIVE.test(session.scope);
+}
 
 async function getToken() {
   if (!session) throw new NeedAuth();
