@@ -46,6 +46,10 @@ code { font-size: .9em; background: var(--line); padding: 1px 5px; border-radius
 .btn.primary { background: var(--accent); color: var(--accent-text); border-color: transparent; }
 .btn.small { padding: 5px 12px; font-size: 14px; }
 .btn.wide { width: 100%; }
+.drive-choice { width: 100%; justify-content: center; padding: 12px 16px; font-size: 16px; }
+#driveDialog .hint { margin: 0 0 6px; }
+#libBox { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 12px; }
+#libBox[hidden] { display: none; }
 .icon {
   background: none; border: 0; cursor: pointer; min-width: 40px; height: 40px;
   font-size: 22px; border-radius: 8px; color: var(--text);

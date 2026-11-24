@@ -2,6 +2,8 @@ import * as db from './db.js';
 import * as sync from './sync.js';
 import { PdfReader, openPdf, pdfInfo, isPdfBuffer } from './pdf-reader.js';
 import { kindleToEpub, isKindleBuffer, KINDLE_EXT, KINDLE_MIME } from './mobi-convert.js';
+import { pickBooks, pickerReady, libraryUrl } from './picker.js';
+import { cloudConfig } from './cloud-config.js';
 import {
   Speaker, CloudSpeaker, ttsSupported, voices, isVietnamese, pickVoice, unlockSpeech, splitSentences,
   googleVoices, GOOGLE_DEFAULT_VOICE, AiSpeaker, AI_VOICES, AI_DEFAULT_VOICE, aiDownload, aiVoiceStored,
@@ -9,8 +11,8 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.12';
-const APP_BUILD = 48; // phải trùng số trong CACHE của sw.js ('epub-reader-v48') — tăng mỗi lần phát hành
+const APP_VERSION = '2.13';
+const APP_BUILD = 49; // phải trùng số trong CACHE của sw.js ('epub-reader-v49') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -292,9 +294,75 @@ $('dockRemote').onclick = () => setLibTab('remote');
 $('btnCloud').onclick = () => {
   const u = sync.currentUser();
   if (!u || u.needsReconnect) { $('btnAccount').click(); return; } // chưa đăng nhập Drive → mở phần đăng nhập
+  // Google Drive (quyền drive.file): chọn sách bằng Google Picker
+  if (u.provider === 'gdrive' && pickerReady()) { openDriveDialog(u); return; }
   $('cloudDialog').showModal();
   if (!$('cloudList').children.length) showCloudFolder();
 };
+
+/* ----- Google Drive: Google Picker + thư viện chung ----- */
+function openDriveDialog(u) {
+  $('driveWho').textContent = u.email || '';
+  const lib = libraryUrl();
+  $('libBox').hidden = !lib;
+  document.querySelectorAll('#driveDialog .lib-name').forEach((el) => { el.textContent = cloudConfig.libraryName || 'thư viện'; });
+  $('libOwner').textContent = cloudConfig.libraryOwner || 'chủ thư viện';
+  $('driveDialog').showModal();
+}
+// Trang đang "cô lập" (Chrome/Edge, để giọng AI chạy đa luồng) thì khung Google Picker bị chặn →
+// tải lại 1 lần ở chế độ thường (?chon-sach) rồi tự mở Picker.
+const K_PICK = 'pendingPick';
+let noIsolateNow = false;
+async function pickFromDrive(library) {
+  $('driveDialog').close();
+  if (window.crossOriginIsolated) {
+    try { sessionStorage.setItem(K_PICK, library ? 'lib' : 'mine'); } catch { /* bỏ qua */ }
+    toast('Đang mở Google Drive…', null, null, 0);
+    location.href = `${location.pathname}?chon-sach`;
+    return;
+  }
+  let docs;
+  try {
+    docs = await pickBooks(await sync.accessToken(), { library });
+  } catch (e) {
+    console.error(e);
+    toast(`Không mở được Google Drive: ${sync.errorText(e)}`);
+    return;
+  }
+  const books = docs.filter((d) => /\.(epub|pdf|mobi|azw3|azw|prc|kf8)$/i.test(d.name || '')
+    || ['application/epub+zip', 'application/pdf', ...KINDLE_MIME].includes(d.mimeType));
+  if (docs.length && !books.length) { toast('Tệp đã chọn không phải sách EPUB, PDF, MOBI hoặc AZW3'); return; }
+  if (books.length === 1) { downloadAndOpen(books[0].id, books[0].name); return; }
+  // Chọn nhiều cuốn: thêm hết vào thư viện, không mở
+  let added = 0;
+  for (const [i, d] of books.entries()) {
+    try {
+      toast(`Đang tải ${i + 1}/${books.length}: “${d.name}”…`, null, null, 0);
+      const buf = await sync.download(d.id);
+      const { id, isNew } = await importBuffer(buf, d.name, { provider: 'gdrive', id: d.id });
+      sync.fileCategoryInfo(d.id).then((c) => setCategory(id, c.name, c.main)).catch(() => {});
+      if (isNew) added++;
+    } catch (e) {
+      console.error(e);
+      toast(`Không tải được “${d.name}”: ${sync.errorText(e)}`, null, null, 6000);
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+  renderLibrary();
+  toast(added ? `Đã thêm ${added} cuốn vào thư viện` : 'Các cuốn này đã có trong thư viện', null, null, 3000);
+}
+// Vừa tải lại ở chế độ thường để chọn sách → bỏ tham số khỏi địa chỉ, mở Picker
+if (new URLSearchParams(location.search).has('chon-sach')) {
+  noIsolateNow = true;
+  history.replaceState(null, '', location.pathname + location.hash);
+  let pending = null;
+  try { pending = sessionStorage.getItem(K_PICK); sessionStorage.removeItem(K_PICK); } catch { /* bỏ qua */ }
+  if (pending && !window.crossOriginIsolated) setTimeout(() => pickFromDrive(pending === 'lib'), 300);
+}
+$('driveClose').onclick = () => $('driveDialog').close();
+$('drivePick').onclick = () => pickFromDrive(false);
+$('libOpen').onclick = () => pickFromDrive(true);
+$('libRequest').onclick = () => window.open(libraryUrl(), '_blank', 'noopener');
 $('cloudClose').onclick = () => $('cloudDialog').close();
 $('cloudUp').onclick = () => { cloudNav.stack.pop(); showCloudFolder(); };
 $('cloudSearchForm').onsubmit = (e) => {
@@ -1965,7 +2033,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   // Lần đầu service worker mới nhận quản lý trang → tải lại 1 lần để bật chế độ cô lập (giọng AI đa luồng)
   // (Safari chưa hỗ trợ kiểu cô lập này → không tải lại; mỗi máy chỉ thử lại tối đa 1 lần/ngày)
   const tryIsolate = () => {
-    if (window.crossOriginIsolated || !navigator.serviceWorker.controller || R.id) return;
+    if (window.crossOriginIsolated || !navigator.serviceWorker.controller || R.id || noIsolateNow) return;
     if (/iPhone|iPad|Macintosh/.test(navigator.userAgent) && !/Chrome|Edg/.test(navigator.userAgent)) return;
     const last = Number(lsGet('isoTried', 0)) || 0;
     if (Date.now() - last < 24 * 3600 * 1000) return;

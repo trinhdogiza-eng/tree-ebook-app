@@ -264,6 +264,23 @@
     </div>
   </dialog>
 
+  <!-- Google Drive: chọn sách bằng Google Picker / xin quyền vào thư viện chung -->
+  <dialog id="driveDialog">
+    <div class="dialog-body">
+      <div class="cloud-head">
+        <div class="cloud-path"><b>Google Drive</b><div id="driveWho" class="sub"></div></div>
+        <button type="button" class="icon" id="driveClose" aria-label="Đóng">✕</button>
+      </div>
+      <button type="button" class="btn primary drive-choice" id="drivePick">📚 Chọn sách từ Google Drive</button>
+      <p class="hint">Chọn một hoặc nhiều cuốn (EPUB, PDF, MOBI, AZW3) trong Drive của bạn, mục <b>Được chia sẻ với tôi</b> hoặc thư viện chung.</p>
+      <div id="libBox" hidden>
+        <button type="button" class="btn drive-choice" id="libOpen">🌳 Mở <span class="lib-name"></span></button>
+        <button type="button" class="btn drive-choice" id="libRequest">🔑 Xin vào <span class="lib-name"></span></button>
+        <p class="hint">Chưa có quyền? Bấm <b>Xin vào</b> → trang Google Drive mở ra → bấm <b>Yêu cầu quyền truy cập</b>. Khi <span id="libOwner"></span> đồng ý, bạn quay lại đây và bấm <b>Mở</b> để chọn sách.</p>
+      </div>
+    </div>
+  </dialog>
+
   <div id="toast" class="toast" hidden>
     <span id="toastMsg"></span>
     <button id="toastAction" class="btn small primary" hidden></button>

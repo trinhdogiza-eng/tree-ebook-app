@@ -28,7 +28,9 @@ const PROVIDERS = {
     name: 'Google Drive',
     clientId: () => cloudConfig.googleClientId,
     authorize: 'https://accounts.google.com/o/oauth2/v2/auth',
-    scope: 'openid email https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/drive.readonly',
+    // drive.appdata: lưu tiến độ đọc trong thư mục ẩn của app; drive.file: chỉ những tệp người dùng tự chọn
+    // qua Google Picker. Cả hai đều là quyền "không nhạy cảm" → app công khai được cho mọi tài khoản Google.
+    scope: 'openid email https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/drive.file',
   },
 };
 
@@ -158,6 +160,9 @@ async function fetchEmail() {
   return me.email || '';
 }
 
+// Token đăng nhập hiện tại (dùng cho Google Picker)
+export const accessToken = () => getToken();
+
 async function getToken() {
   if (!session) throw new NeedAuth();
   if (session.accessToken && Date.now() < session.expiresAt) return session.accessToken;
@@ -183,7 +188,13 @@ async function apiOk(url, opts) {
   if (!r.ok) {
     let msg = `HTTP ${r.status}`;
     try { const j = await r.json(); msg = j.error?.message || j.error_description || msg; } catch { /* bỏ qua */ }
-    throw new Error(msg);
+    // Google Drive (quyền drive.file): tệp chưa được chọn qua Google Picker trên tài khoản này → 404
+    if (session?.provider === 'gdrive' && (r.status === 404 || r.status === 403) && /\/files\//.test(url)) {
+      msg = 'App chưa được quyền đọc tệp này — bấm Google Drive → Chọn sách và chọn lại đúng cuốn đó';
+    }
+    const err = new Error(msg);
+    err.status = r.status;
+    throw err;
   }
   return r;
 }

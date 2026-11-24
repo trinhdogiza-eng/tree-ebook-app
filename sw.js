@@ -1,7 +1,7 @@
 ﻿// Service worker: lưu sẵn giao diện và thư viện để app mở được khi không có mạng.
-const CACHE = 'epub-reader-v48';
+const CACHE = 'epub-reader-v49';
 const SHELL = [
-  './', 'index.html', 'css/style.css', 'js/app.js', 'js/db.js', 'js/sync.js', 'js/cloud-config.js', 'js/pdf-reader.js', 'js/read-aloud.js', 'js/mobi-convert.js',
+  './', 'index.html', 'css/style.css', 'js/app.js', 'js/db.js', 'js/sync.js', 'js/cloud-config.js', 'js/pdf-reader.js', 'js/read-aloud.js', 'js/mobi-convert.js', 'js/picker.js',
   'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png',
   'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js',
   'https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js',
@@ -38,7 +38,8 @@ self.addEventListener('fetch', (e) => {
   if (sameOrigin) {
     // Mạng trước (để nhận bản cập nhật), rơi về bộ nhớ đệm khi ngoại tuyến.
     // cache: 'no-cache' → luôn hỏi lại máy chủ, không dùng bản HTTP-cache cũ (GitHub Pages cho cache 10 phút).
-    const isPage = req.mode === 'navigate';
+    // Trang cô lập (COOP/COEP) chặn khung Google Picker (docs.google.com) → mở "?chon-sach" thì không cô lập
+    const isPage = req.mode === 'navigate' && !url.searchParams.has('chon-sach');
     e.respondWith(
       fetch(req, { cache: 'no-cache' }).then((res) => {
         if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
