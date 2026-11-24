@@ -1,7 +1,7 @@
 ﻿// Service worker: lưu sẵn giao diện và thư viện để app mở được khi không có mạng.
-const CACHE = 'epub-reader-v51';
+const CACHE = 'epub-reader-v52';
 const SHELL = [
-  './', 'index.html', 'css/style.css', 'js/app.js', 'js/db.js', 'js/sync.js', 'js/cloud-config.js', 'js/pdf-reader.js', 'js/read-aloud.js', 'js/mobi-convert.js', 'js/picker.js',
+  './', 'index.html', 'css/style.css', 'js/app.js', 'js/db.js', 'js/sync.js', 'js/cloud-config.js', 'js/pdf-reader.js', 'js/read-aloud.js', 'js/mobi-convert.js', 'js/picker.js', 'js/library-categories.js',
   'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png',
   'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js',
   'https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js',

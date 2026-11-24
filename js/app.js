@@ -4,6 +4,7 @@ import { PdfReader, openPdf, pdfInfo, isPdfBuffer } from './pdf-reader.js';
 import { kindleToEpub, isKindleBuffer, KINDLE_EXT, KINDLE_MIME } from './mobi-convert.js';
 import { pickBooks, pickerReady, libraryUrl } from './picker.js';
 import { cloudConfig } from './cloud-config.js';
+import { LIBRARY_CATEGORIES } from './library-categories.js';
 import {
   Speaker, CloudSpeaker, ttsSupported, voices, isVietnamese, pickVoice, unlockSpeech, splitSentences,
   googleVoices, GOOGLE_DEFAULT_VOICE, AiSpeaker, AI_VOICES, AI_DEFAULT_VOICE, aiDownload, aiVoiceStored,
@@ -11,8 +12,8 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.15';
-const APP_BUILD = 51; // phải trùng số trong CACHE của sw.js ('epub-reader-v51') — tăng mỗi lần phát hành
+const APP_VERSION = '2.16';
+const APP_BUILD = 52; // phải trùng số trong CACHE của sw.js ('epub-reader-v52') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -309,7 +310,7 @@ function openDriveDialog(u) {
   $('libOwner').textContent = cloudConfig.libraryOwner || 'chủ thư viện';
   // Trang chọn sách toàn màn hình của Google không mở thẳng được thư mục thư viện → chỉ đường
   $('pickHint').innerHTML = needsOnePick()
-    ? `Trang chọn tệp của Google sẽ mở ra. Sách của thư viện nằm ở thẻ <b>Được chia sẻ với tôi</b> → <b>${esc(cloudConfig.libraryName || 'thư viện')}</b> (hoặc gõ tên sách vào ô tìm kiếm). Chọn xong bấm <b>Chèn</b>.`
+    ? `Trang chọn tệp của Google sẽ mở ra (Google hỏi <b>Cho phép truy cập</b> → bấm đồng ý). Chọn sách xong bấm <b>Chèn</b>. Muốn vào thẳng kho sách: bấm <b>Mở ${esc(cloudConfig.libraryName || 'thư viện')}</b> bên dưới.`
     : 'Chọn một hoặc nhiều cuốn (EPUB, PDF, MOBI, AZW3) trong Drive của bạn, mục <b>Được chia sẻ với tôi</b> hoặc thư viện chung.';
   $('driveDialog').showModal();
 }
@@ -355,7 +356,9 @@ async function pickFromDrive(library) {
   $('driveDialog').close();
   if (needsOnePick()) {
     toast('Đang mở trang chọn sách của Google…', null, null, 0);
-    sync.startOnePick();
+    // Thư viện: mở thẳng danh sách thể loại ("Ebook sách" đứng đầu để vẫn vào được thể loại mới thêm)
+    const libIds = cloudConfig.libraryFolderId ? [cloudConfig.libraryFolderId, ...LIBRARY_CATEGORIES.map(([id]) => id)] : [];
+    sync.startOnePick({ folderId: library ? libIds.join(',') : '' });
     return;
   }
   if (window.crossOriginIsolated) {
@@ -1111,7 +1114,10 @@ function curlCloneFor(scroll) {
       frame.setAttribute('sandbox', 'allow-same-origin'); // chỉ để hiển thị, không chạy script
       frame.setAttribute('aria-hidden', 'true');
       frame.tabIndex = -1;
-      Object.assign(frame.style, { width: `${src.offsetWidth}px`, height: `${src.offsetHeight}px` });
+      // Chỉ rộng đúng 1 màn hình (không phải cả chương dài hàng chục nghìn px) rồi cuộn bên trong tới trang
+      // đang lật → lớp đồ hoạ nhỏ, iPhone lật mượt, không giật
+      const pageW = R.rendition?.manager?.container?.offsetWidth || src.offsetWidth;
+      Object.assign(frame.style, { width: `${pageW}px`, height: `${src.offsetHeight}px` });
       frame.onload = () => { if (++loaded === 2) c.ready = true; };
       frame.srcdoc = html;
       host.appendChild(frame);
@@ -1121,7 +1127,11 @@ function curlCloneFor(scroll) {
   }
   if (!c.ready) return null;
   for (const o of curlClones.values()) o.frames.forEach((f) => { f.style.display = o === c ? '' : 'none'; });
-  c.frames.forEach((f) => { f.style.transform = `translateX(${view.offsetLeft - scroll}px)`; });
+  const x = Math.round(scroll - view.offsetLeft);
+  c.frames.forEach((f) => {
+    const se = f.contentDocument?.scrollingElement;
+    if (se) se.scrollLeft = x; else f.style.transform = `translateX(${-x}px)`;
+  });
   return c;
 }
 

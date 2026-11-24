@@ -124,7 +124,9 @@ async function msToken(params) {
    về app kèm picked_file_ids và 1 mã truy cập chỉ có quyền drive.file cho các tệp đó. */
 const K_ONEPICK = 'cloudOnePick';      // yêu cầu đang chờ { state, at }
 const K_PICKED = 'cloudPicked';        // kết quả chờ app xử lý { ids, token, expiresAt }
-export function startOnePick() {
+// folderId: mở thẳng thư mục đó (vd. thư viện "Ebook sách"); người dùng bấm vào để xem các thư mục con.
+// prompt=consent là bắt buộc để Google hiện trang chọn tệp (bỏ đi thì Google chuyển thẳng về app).
+export function startOnePick({ folderId = '' } = {}) {
   const p = PROVIDERS.gdrive;
   const state = rand(16);
   lsSet(K_ONEPICK, { state, at: Date.now() });
@@ -133,6 +135,7 @@ export function startOnePick() {
     scope: 'https://www.googleapis.com/auth/drive.file', prompt: 'consent',
     trigger_onepick: 'true', allow_multiple: 'true', state,
   });
+  if (folderId) params.set('file_ids', folderId);
   if (session?.provider === 'gdrive' && session.email) params.set('login_hint', session.email);
   location.assign(`${p.authorize}?${params}`);
   return new Promise(() => {}); // trang đang chuyển đi
