@@ -686,32 +686,62 @@ async function gList(q, fields) {
   return out;
 }
 // extras: [{ id, name }] — kho sách thêm, mỗi kho thành 1 thư mục cấp đầu, đánh dấu f[3] = 1 (gốc của 1 kho)
-export async function buildCatalog(rootId, extras = []) {
+export const buildCatalog = (rootId, extras = []) => crawlCatalog(rootId, extras, gList);
+// Người dùng khác: xem trực tiếp 1 thư mục của kho để "Ai có link đều xem được", bằng API key (không cần đăng nhập).
+// Google chỉ cho hỏi công khai TỪNG thư mục một (gộp "'a' in parents or 'b' in parents" bị từ chối 403).
+export const listPublic = (folderId, apiKey) =>
+  keyList(`'${folderId}' in parents and trashed=false`, 'id,name,mimeType,size,resourceKey', apiKey);
+export { isBook };
+async function keyList(q, fields, apiKey) {
+  const out = [];
+  let token = '';
+  for (let page = 0; page < 50; page++) {
+    const params = new URLSearchParams({ q, fields: `files(${fields}),nextPageToken`, pageSize: '1000', key: apiKey });
+    if (token) params.set('pageToken', token);
+    const r = await fetch(`${GDRIVE}/files?${params}`);
+    if (!r.ok) { let m = `HTTP ${r.status}`; try { m = (await r.json()).error?.message || m; } catch { /* bỏ qua */ } throw new Error(m); }
+    const j = await r.json();
+    out.push(...(j.files || []));
+    token = j.nextPageToken;
+    if (!token) break;
+  }
+  return out;
+}
+// Duyệt theo từng tầng (mỗi lần hỏi 40 thư mục, chạy song song 6 lần hỏi) → { f, b } rồi làm gọn
+async function crawlCatalog(rootId, extras, list) {
   const folders = [];               // [id, name, parentIdx, (1 = gốc kho thêm)]
-  const index = new Map([[rootId, -1]]);
+  const index = new Map(rootId ? [[rootId, -1]] : []);
   const books = [];
   for (const x of extras) {
     if (!x?.id || index.has(x.id)) continue;
     index.set(x.id, folders.length);
     folders.push([x.id, x.name || 'Kho sách', -1, 1]);
   }
-  let level = [rootId, ...folders.map((f) => f[0])];
+  let level = [...(rootId ? [rootId] : []), ...folders.map((f) => f[0])];
   while (level.length) {
     const next = [];
-    for (let i = 0; i < level.length; i += 40) {
-      const ids = level.slice(i, i + 40);
-      const q = `(${ids.map((id) => `'${id}' in parents`).join(' or ')}) and trashed=false`;
-      for (const f of await gList(q, 'id,name,mimeType,size,parents,resourceKey')) {
-        const parent = index.get((f.parents || []).find((p) => index.has(p)));
-        if (parent === undefined) continue;
-        if (f.mimeType === 'application/vnd.google-apps.folder') {
-          if (index.has(f.id)) continue;
-          index.set(f.id, folders.length);
-          folders.push([f.id, f.name, parent]);
-          next.push(f.id);
-        } else if (isBook(f.name, f.mimeType) && f.name !== CATALOG_NAME) {
-          books.push(f.resourceKey ? [f.id, f.name, Number(f.size) || 0, parent, f.resourceKey] : [f.id, f.name, Number(f.size) || 0, parent]);
-        }
+    const chunks = [];
+    for (let i = 0; i < level.length; i += 40) chunks.push(level.slice(i, i + 40));
+    const results = new Array(chunks.length);
+    let cur = 0;
+    const worker = async () => {
+      while (cur < chunks.length) {
+        const k = cur++;
+        const q = `(${chunks[k].map((id) => `'${id}' in parents`).join(' or ')}) and trashed=false`;
+        results[k] = await list(q, 'id,name,mimeType,size,parents,resourceKey');
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(6, chunks.length) }, worker));
+    for (const f of results.flat()) {
+      const parent = index.get((f.parents || []).find((p) => index.has(p)));
+      if (parent === undefined) continue;
+      if (f.mimeType === 'application/vnd.google-apps.folder') {
+        if (index.has(f.id)) continue;
+        index.set(f.id, folders.length);
+        folders.push([f.id, f.name, parent]);
+        next.push(f.id);
+      } else if (isBook(f.name, f.mimeType) && f.name !== CATALOG_NAME) {
+        books.push(f.resourceKey ? [f.id, f.name, Number(f.size) || 0, parent, f.resourceKey] : [f.id, f.name, Number(f.size) || 0, parent]);
       }
     }
     level = next;
