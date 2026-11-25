@@ -254,6 +254,30 @@ code { font-size: .9em; background: var(--line); padding: 1px 5px; border-radius
 .sw.light { background: #fff; } .sw.sepia { background: #f4ecd8; } .sw.dark { background: #1b1a19; }
 .sw.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
 
+/* ---------- Menu Aa: khung nổi gọn, 3 thẻ (Văn bản · Trang · Đọc to) ---------- */
+#settingsPanel {
+  top: calc(var(--safe-top) + 46px); bottom: auto; right: 8px; width: min(380px, calc(100vw - 16px));
+  max-height: calc(100% - var(--safe-top) - 46px - 16px - var(--safe-bottom));
+  padding: 0; border: 1px solid var(--line); border-radius: 16px; overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .28);
+}
+.set-tabs { display: flex; border-bottom: 1px solid var(--line); flex: none; }
+.set-tabs button {
+  flex: 1; padding: 14px 6px 12px; border: 0; background: none; font: inherit; font-size: 15px; color: var(--muted);
+  cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -1px;
+}
+.set-tabs button.on { color: var(--accent); font-weight: 600; border-bottom-color: var(--accent); }
+.set-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.set-tab .setting:last-child { border-bottom: 0; }
+.set-tab[hidden] { display: none; }
+/* Màu nền: 3 ô lớn có chữ (như Play Sách) */
+.themes.big { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.themes.big .sw { width: auto; height: 46px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }
+.themes.big .sw span { font-size: 14px; color: #3a3530; }
+.themes.big .sw.dark span { color: #e8e2d8; }
+.themes.big .sw.active span::before { content: '✓ '; font-weight: 700; }
+#settingsPanel .version { border-top: 1px solid var(--line); text-align: center; padding: 10px 16px; }
+
 /* ---------- Hộp thoại ---------- */
 dialog {
   border: 0; border-radius: 16px; padding: 0; width: min(420px, calc(100vw - 32px));
