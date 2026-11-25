@@ -23,4 +23,10 @@ export const cloudConfig = {
   // Người khác đọc danh mục + tải sách bằng googleApiKey → thư mục phải để "Ai có link đều xem được"
   // và API key phải được phép dùng Google Drive API.
   catalogFileId: '1l-ADcTYj4gh1i83F2T2DmuhhyGCA9DUa',
+  // Kho sách thêm (cũng của dovantrinh@gmail.com, để "Ai có link đều xem được"). Mỗi kho hiện thành 1 mục
+  // trong thư viện chung và được gộp vào cùng tệp danh mục ở trên. Thêm kho: thêm 1 dòng { id, name }.
+  // Kho dạng thư viện Calibre (Thể loại/Tác giả/Tên sách/…) được tự rút gọn: bỏ tầng thư mục chỉ chứa 1 cuốn.
+  extraLibraries: [
+    { id: '1BL3RMDMUHNiU2-r5ylGk79brBe2_gkek', name: 'Kho sách 2' }, // "Ebook sách" ở thư mục gốc Drive, thêm 25/11/2026
+  ],
 };
