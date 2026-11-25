@@ -39,6 +39,7 @@ export async function pickBooks(token, { library = false, email = '', onBack = n
   };
   const lib = cloudConfig.libraryFolderId
     ? view(cloudConfig.libraryName || 'Thư viện', (v) => v.setParent(cloudConfig.libraryFolderId)) : null;
+  const extras = (cloudConfig.extraLibraries || []).map((x) => view(x.name, (v) => v.setParent(x.id)));
   // Không dùng setParent('root') hay setOwnedByMe(true): cả hai làm danh sách trống (đã thử 25/11/2026)
   const mine = view('Drive của tôi', () => {});
   const shared = view('Được chia sẻ với tôi', (v) => v.setOwnedByMe(false));
@@ -62,7 +63,7 @@ export async function pickBooks(token, { library = false, email = '', onBack = n
         } else if (action === P.Action.CANCEL) resolve([]);
       });
     // Thư viện chung đứng đầu khi mở từ nút "Thư viện", còn lại thì Drive của tôi trước
-    const views = library && lib ? [lib, mine, shared] : [mine, shared, lib].filter(Boolean);
+    const views = library && lib ? [lib, ...extras, mine, shared] : [mine, shared, lib, ...extras].filter(Boolean);
     views.forEach((v) => b.addView(v));
     if (email) b.setAuthUser(email); // nhiều tài khoản Google trên trình duyệt → mở đúng tài khoản đã đăng nhập app
     const picker = b.build();
