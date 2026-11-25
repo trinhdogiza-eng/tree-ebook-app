@@ -591,25 +591,40 @@ async function driveFolders() {
   for (const [id, f] of map) folderNames.set(id, f.name);
   return map;
 }
+// Thể loại của thư mục chứa sách: nếu thư mục nằm (ở tầng nào cũng được) trong 1 thư mục "Ebook sách"
+// → thể loại = thư mục ngay dưới "Ebook sách" (thư viện Calibre: Ebook sách/Thể loại/Tác giả/Tên sách/sách.epub);
+// không thì = chính thư mục chứa. → { id, name, main }
+function shelfCat(folders, pid) {
+  for (let id = pid, depth = 0; id && folders.has(id) && depth < 12; depth++) {
+    const f = folders.get(id);
+    if (isShelf(folders.get(f.parent)?.name)) return { id, name: f.name, main: true };
+    id = f.parent;
+  }
+  return folders.has(pid) ? { id: pid, name: folders.get(pid).name, main: false } : null;
+}
 // Gắn nhãn thể loại (tên thư mục chứa) cho các sách trong danh sách
 async function withCategories(items) {
   if (session.provider !== 'gdrive' || !items.some((i) => i.parent)) return items;
   try {
     const folders = await driveFolders();
-    for (const it of items) if (it.parent && folders.has(it.parent)) it.cat = folders.get(it.parent).name;
+    for (const it of items) { const c = it.parent && shelfCat(folders, it.parent); if (c) it.cat = c.name; }
   } catch { /* không có nhãn cũng không sao */ }
   return items;
 }
-// Mục "Theo thể loại": mọi thư mục có chứa sách, kèm số cuốn → bấm vào là xem sách trong thư mục đó
+// Mục "Theo thể loại": mọi thể loại có chứa sách, kèm số cuốn → bấm vào là xem sách trong thư mục đó
 async function categoryFolders() {
   const [books, folders] = await Promise.all([gCollect(`trashed=false and (${G_EPUB} or ${G_PDF} or ${G_KINDLE})`), driveFolders()]);
-  const count = new Map();
-  for (const b of books) if (b.parent && folders.has(b.parent)) count.set(b.parent, (count.get(b.parent) || 0) + 1);
+  const cats = new Map();
+  for (const b of books) {
+    const c = b.parent && shelfCat(folders, b.parent);
+    if (!c) continue;
+    const o = cats.get(c.id) || { ...c, n: 0 };
+    o.n++; cats.set(c.id, o);
+  }
   // Thể loại nằm trong thư mục "Ebook sách" xếp trước, thư mục ở chỗ khác trên Drive xếp cuối
-  return [...count].map(([id, n]) => {
-    const main = isShelf(folders.get(folders.get(id).parent)?.name);
-    return { id, name: folders.get(id).name, isFolder: true, icon: main ? '🏷️' : '📁', note: main ? `${n} cuốn` : `${n} cuốn · ngoài Ebook sách`, main };
-  }).sort((a, b) => (b.main - a.main) || a.name.localeCompare(b.name, 'vi', { numeric: true }));
+  return [...cats.values()].map(({ id, name, main, n }) => ({
+    id, name, isFolder: true, icon: main ? '🏷️' : '📁', note: main ? `${n} cuốn` : `${n} cuốn · ngoài Ebook sách`, main,
+  })).sort((a, b) => (b.main - a.main) || a.name.localeCompare(b.name, 'vi', { numeric: true }));
 }
 // Thư mục kho sách chính
 export const SHELF_NAME = 'Ebook sách';
@@ -621,8 +636,8 @@ export async function fileCategoryInfo(fileId) {
   try {
     const f = await (await apiOk(`${GDRIVE}/files/${encodeURIComponent(fileId)}?fields=parents`)).json();
     const folders = await driveFolders();
-    const cat = folders.get(f.parents?.[0]);
-    return { name, main: isShelf(folders.get(cat?.parent)?.name) };
+    const c = shelfCat(folders, f.parents?.[0]);
+    return c ? { name: c.name, main: c.main } : { name, main: false };
   } catch { return { name, main: false }; }
 }
 
@@ -670,11 +685,17 @@ async function gList(q, fields) {
   }
   return out;
 }
-export async function buildCatalog(rootId) {
-  const folders = [];               // [id, name, parentIdx]
+// extras: [{ id, name }] — kho sách thêm, mỗi kho thành 1 thư mục cấp đầu, đánh dấu f[3] = 1 (gốc của 1 kho)
+export async function buildCatalog(rootId, extras = []) {
+  const folders = [];               // [id, name, parentIdx, (1 = gốc kho thêm)]
   const index = new Map([[rootId, -1]]);
   const books = [];
-  let level = [rootId];
+  for (const x of extras) {
+    if (!x?.id || index.has(x.id)) continue;
+    index.set(x.id, folders.length);
+    folders.push([x.id, x.name || 'Kho sách', -1, 1]);
+  }
+  let level = [rootId, ...folders.map((f) => f[0])];
   while (level.length) {
     const next = [];
     for (let i = 0; i < level.length; i += 40) {
@@ -695,7 +716,49 @@ export async function buildCatalog(rootId) {
     }
     level = next;
   }
-  return { v: 1, at: Date.now(), root: rootId, f: folders, b: books };
+  return tidyCatalog({ v: 1, at: Date.now(), root: rootId, f: folders, b: books });
+}
+// Gọn danh mục:
+//  1) Cùng 1 cuốn có nhiều định dạng trong cùng thư mục (thư viện Calibre: .epub + .mobi + .azw3) → giữ 1, ưu tiên EPUB.
+//  2) Thư mục chỉ chứa đúng 1 mục (Calibre: Tác giả/Tên sách (123)/sách) → đưa mục đó lên thư mục cha, bỏ thư mục.
+//     Không đụng tới thư mục cấp đầu (thể loại) và gốc các kho. Thư mục rỗng cũng bỏ.
+const FMT_RANK = { epub: 0, azw3: 1, kf8: 1, mobi: 2, azw: 3, prc: 4, pdf: 5 };
+function tidyCatalog(c) {
+  const ext = (n) => (n.match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
+  const base = (n) => n.replace(/\.[a-z0-9]+$/i, '').normalize('NFC').trim().toLowerCase();
+  const best = new Map();
+  for (const b of c.b) {
+    const k = `${b[3]}|${base(b[1])}`;
+    const o = best.get(k);
+    if (!o || (FMT_RANK[ext(b[1])] ?? 9) < (FMT_RANK[ext(o[1])] ?? 9)) best.set(k, b);
+  }
+  const books = [...best.values()];
+  const f = c.f.map((x) => [...x]);
+  const keep = f.map(() => true);
+  const kids = f.map(() => []);               // thư mục con còn giữ
+  const items = f.map(() => []);              // sách trực tiếp
+  f.forEach((x, i) => { if (x[2] >= 0) kids[x[2]].push(i); });
+  books.forEach((b) => { if (b[3] >= 0) items[b[3]].push(b); });
+  // Từ dưới lên (thư mục con luôn đứng sau thư mục cha trong danh sách)
+  for (let i = f.length - 1; i >= 0; i--) {
+    const p = f[i][2];
+    if (p === -1 || f[i][3] === 1 || f[p][3] === 1) continue; // thể loại cấp đầu / gốc kho / thể loại trong kho: giữ
+    const k = kids[i].filter((j) => keep[j]);
+    const n = k.length + items[i].length;
+    if (n > 1) continue;
+    keep[i] = false;
+    kids[p] = kids[p].filter((j) => j !== i);
+    for (const j of k) { f[j][2] = p; kids[p].push(j); }
+    for (const b of items[i]) { b[3] = p; items[p].push(b); }
+    items[i] = [];
+  }
+  // Đánh lại chỉ số
+  const map = new Map();
+  const outF = [];
+  f.forEach((x, i) => { if (keep[i]) { map.set(i, outF.length); outF.push(x); } });
+  for (const x of outF) x[2] = x[2] === -1 ? -1 : map.get(x[2]);
+  for (const b of books) b[3] = b[3] === -1 ? -1 : map.get(b[3]);
+  return { ...c, f: outF.map((x) => (x[3] === 1 ? x : x.slice(0, 3))), b: books };
 }
 // Lưu danh mục vào thư mục thư viện (tạo mới lần đầu, sau đó ghi đè cùng tệp) → trả về mã tệp
 export async function saveCatalog(catalog, rootId) {
