@@ -13,7 +13,7 @@ import {
 
 /* global ePub */
 const APP_VERSION = '2.23';
-const APP_BUILD = 73; // phải trùng số trong CACHE của sw.js ('epub-reader-v73') — tăng mỗi lần phát hành
+const APP_BUILD = 74; // phải trùng số trong CACHE của sw.js ('epub-reader-v74') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 // iPhone/iPad mở từ màn hình chính, chế độ toàn màn hình (black-translucent): iOS báo vùng hiển thị (innerHeight)
 // hụt đúng bằng thanh trạng thái so với màn hình thật → đo khoảng hụt và để CSS kéo đáy màn hình app xuống bù.
@@ -1466,17 +1466,20 @@ function curlLayer() {
 // Chụp 2 thanh trên/dưới (tên chương, vạch tiến độ) vào trang giấy để chúng lật cùng trang
 function curlBars(layer) {
   const show = !$('reader').classList.contains('immersive');
+  const sysbar = $('reader').querySelector(':scope > .sysbar'); // đồng hồ + pin (Android toàn màn hình): luôn lật theo trang
   for (const host of layer.querySelectorAll('.cp-bars')) {
     host.replaceChildren();
-    if (!show) continue;
-    for (const bar of [$('readerTop'), $('readerBottom')]) {
-      const cl = bar.cloneNode(true);
-      cl.removeAttribute('id');
-      cl.querySelectorAll('[id]').forEach((e) => e.removeAttribute('id'));
-      const inp = cl.querySelector('input[type=range]');
-      if (inp) inp.value = $('progressSlider').value;
-      host.appendChild(cl);
+    if (show) {
+      for (const bar of [$('readerTop'), $('readerBottom')]) {
+        const cl = bar.cloneNode(true);
+        cl.removeAttribute('id');
+        cl.querySelectorAll('[id]').forEach((e) => e.removeAttribute('id'));
+        const inp = cl.querySelector('input[type=range]');
+        if (inp) inp.value = $('progressSlider').value;
+        host.appendChild(cl);
+      }
     }
+    if (sysbar) host.appendChild(sysbar.cloneNode(true)); // sau cùng → nằm trên thanh tiêu đề (như ngoài thật)
   }
 }
 // Lấy (hoặc dựng nền) bản sao cho chương chứa vị trí cuộn `scroll`; trả về null nếu chưa sẵn sàng
@@ -2356,6 +2359,54 @@ for (const dlg of document.querySelectorAll('dialog')) {
 
 $('btnToc').onclick = () => { $('settingsPanel').hidden = true; $('tocPanel').hidden = !$('tocPanel').hidden; document.querySelector('#tocList a.current')?.scrollIntoView({ block: 'center' }); };
 $('btnSettings').onclick = () => { $('tocPanel').hidden = true; $('settingsPanel').hidden = !$('settingsPanel').hidden; fillVoices(); showScreenInfo(); };
+/* ----- Android toàn màn hình: thanh trạng thái của máy bị ẩn → app tự hiện đồng hồ + % pin ở mép trên ----- */
+// (trình duyệt không cho app web đọc sóng điện thoại / wifi, nên chỉ có giờ và pin)
+const wantSysbar = () => (/Android/i.test(navigator.userAgent) && matchMedia('(display-mode: fullscreen)').matches)
+  || (location.hostname === 'localhost' && lsGet('forceSysbar', false)); // thử trên máy
+let sysBattery = null;
+function renderSysbar() {
+  const d = new Date();
+  const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const lv = sysBattery ? Math.round(sysBattery.level * 100) : null;
+  const bat = lv == null ? '' : `${sysBattery.charging ? '⚡' : ''}${lv}%<i class="sb-cell"><b style="width:${lv}%"></b></i>`;
+  document.querySelectorAll('.sysbar').forEach((el) => {
+    el.querySelector('.sb-time').textContent = time;
+    const b = el.querySelector('.sb-bat');
+    b.innerHTML = bat;
+    b.classList.toggle('low', lv != null && lv <= 20 && !sysBattery.charging);
+  });
+}
+function setupSysbar() {
+  const on = wantSysbar();
+  document.body.classList.toggle('has-sysbar', on);
+  if (!on) return;
+  for (const host of [$('library'), $('reader')]) {
+    if (host.querySelector(':scope > .sysbar')) continue;
+    const el = document.createElement('div');
+    el.className = 'sysbar';
+    el.setAttribute('aria-hidden', 'true');
+    el.innerHTML = '<span class="sb-time"></span><span class="sb-bat"></span>';
+    host.appendChild(el);
+  }
+  renderSysbar();
+  if (!setupSysbar.ticking) { // cập nhật đúng lúc sang phút mới
+    setupSysbar.ticking = true;
+    const tick = () => { renderSysbar(); setTimeout(tick, 60000 - (Date.now() % 60000) + 50); };
+    setTimeout(tick, 60000 - (Date.now() % 60000) + 50);
+  }
+  if (!sysBattery && navigator.getBattery) {
+    navigator.getBattery().then((b) => {
+      sysBattery = b;
+      b.addEventListener('levelchange', renderSysbar);
+      b.addEventListener('chargingchange', renderSysbar);
+      renderSysbar();
+    }).catch(() => {});
+  }
+}
+setupSysbar();
+matchMedia('(display-mode: fullscreen)').addEventListener?.('change', setupSysbar);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && document.body.classList.contains('has-sysbar')) renderSysbar(); });
+
 // Số đo màn hình thật (để sửa lỗi toàn màn hình trên từng loại máy): hiện ở dòng cuối menu Aa
 function showScreenInfo() {
   try {
