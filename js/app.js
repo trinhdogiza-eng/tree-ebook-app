@@ -13,7 +13,7 @@ import {
 
 /* global ePub */
 const APP_VERSION = '2.23';
-const APP_BUILD = 61; // phải trùng số trong CACHE của sw.js ('epub-reader-v61') — tăng mỗi lần phát hành
+const APP_BUILD = 62; // phải trùng số trong CACHE của sw.js ('epub-reader-v62') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -265,9 +265,7 @@ const MY_DRIVE = '__mydrive';
 function catalogReady() { return !!cloudConfig.catalogFileId && !!cloudConfig.googleApiKey; }
 async function loadCatalog(force = false) {
   if (!catalog) { try { catalog = JSON.parse(localStorage.getItem(K_CATALOG) || 'null'); } catch { catalog = null; } }
-  // Danh mục cũ chưa có kho sách mới thêm (vd. "Kho sách 2") → coi như cũ, tải lại ngay mỗi lần mở
-  const missingKho = !!catalog && extraLibs().some((x) => !catalog.f?.some((f) => f[0] === x.id));
-  const stale = !catalog || missingKho || Date.now() - (catalog.fetchedAt || 0) > 60 * 60 * 1000;
+  const stale = !catalog || Date.now() - (catalog.fetchedAt || 0) > 60 * 60 * 1000;
   if (catalog && !stale && !force) return catalog;
   catalogLoading ||= sync.fetchCatalog(cloudConfig.catalogFileId, cloudConfig.googleApiKey).then((c) => {
     c.fetchedAt = Date.now();
@@ -277,6 +275,53 @@ async function loadCatalog(force = false) {
   }).finally(() => { catalogLoading = null; });
   if (catalog) { catalogLoading.catch(() => {}); return catalog; } // có bản cũ: dùng ngay, cập nhật ngầm
   return catalogLoading;
+}
+/* Kho sách thêm (cloudConfig.extraLibraries) chưa có trong danh mục của chủ thư viện (danh mục chỉ lập lại khi app
+   của chủ mở) → người đọc vẫn thấy kho ở gốc thư viện và DUYỆT TRỰC TIẾP từng thư mục bằng API key
+   (thư mục kho để "Ai có link đều xem được"). Kho dạng Calibre có hàng nghìn thư mục nên không lập trọn trên máy người đọc. */
+const missingExtras = (c) => extraLibs().filter((x) => !c.f?.some((f) => f[0] === x.id));
+async function catalogWithExtras() {
+  const c = await loadCatalog();
+  const add = missingExtras(c).map((x) => [x.id, x.name, -1, 1]);
+  return add.length ? { ...c, f: [...c.f, ...add] } : c;
+}
+// Thư mục đang xem thuộc kho thêm chưa có trong danh mục → duyệt trực tiếp
+const isLiveFolder = (cur) => !!cur && (cur.live || (extraLibs().some((x) => x.id === cur.id) && !catalog?.f?.some((f) => f[0] === cur.id)));
+const FMT_ORDER = { epub: 0, azw3: 1, kf8: 1, mobi: 2, azw: 3, prc: 4, pdf: 5 };
+function bestBooks(files) {
+  const best = new Map();
+  for (const f of files) {
+    if (f.mimeType === 'application/vnd.google-apps.folder' || !sync.isBook(f.name, f.mimeType)) continue;
+    const k = f.name.replace(/\.[a-z0-9]+$/i, '').normalize('NFC').trim().toLowerCase();
+    const rank = (n) => FMT_ORDER[(n.match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase()] ?? 9;
+    if (!best.has(k) || rank(f.name) < rank(best.get(k).name)) best.set(k, f);
+  }
+  return [...best.values()];
+}
+// Liệt kê 1 thư mục của kho thêm. Thư mục con chỉ chứa sách (Calibre: "Tên sách (123)/sách.epub") → hiện thẳng cuốn sách.
+async function liveExtraList(folderId, cat, expand = true) {
+  const key = cloudConfig.googleApiKey;
+  const raw = await sync.listPublic(folderId, key);
+  const folders = raw.filter((f) => f.mimeType === 'application/vnd.google-apps.folder');
+  const books = bestBooks(raw);
+  const shown = [];
+  if (expand && folders.length && folders.length <= 60) {
+    let i = 0;
+    const kids = new Array(folders.length);
+    const worker = async () => { while (i < folders.length) { const k = i++; try { kids[k] = await sync.listPublic(folders[k].id, key); } catch { kids[k] = null; } } };
+    await Promise.all(Array.from({ length: Math.min(8, folders.length) }, worker));
+    folders.forEach((f, k) => {
+      const sub = kids[k];
+      const subBooks = sub ? bestBooks(sub) : [];
+      if (sub && subBooks.length && !sub.some((x) => x.mimeType === 'application/vnd.google-apps.folder')) books.push(...subBooks);
+      else shown.push(f);
+    });
+  } else shown.push(...folders);
+  const by = (a, b) => a.name.localeCompare(b.name, 'vi', { numeric: true });
+  return [
+    ...shown.map((f) => ({ id: f.id, name: f.name, isFolder: true, live: true })).sort(by),
+    ...books.map((f) => ({ id: f.id, name: f.name, size: Number(f.size) || 0, pub: true, rk: f.resourceKey || '', cat })).sort(by),
+  ];
 }
 // Thư mục trong danh mục → danh sách mục (thư mục trước, sách sau)
 function catalogList(c, folderId) {
@@ -355,7 +400,15 @@ async function showCloudFolder() {
     $('cloudPath').textContent = cloudNav.stack.length ? ['…', ...cloudNav.stack.map((s) => s.name)].slice(-3).join(' / ') : `${cloudConfig.libraryOwner ? `của ${cloudConfig.libraryOwner}` : ''}`;
     $('cloudUp').querySelector('span').textContent = cloudNav.stack.length ? 'Quay lại' : 'Đóng';
     const mine = !cur ? [{ id: MY_DRIVE, name: 'Sách trong Google Drive của bạn', isFolder: true, icon: '☁️', note: 'chọn tệp' }] : [];
-    await loadCloudItems(async () => [...mine, ...catalogList(await loadCatalog(), cur?.id || null)]);
+    if (cur && (await loadCatalog().catch(() => null), isLiveFolder(cur))) {
+      // Kho thêm: duyệt trực tiếp; thể loại = thư mục ngay dưới gốc kho
+      const rootAt = cloudNav.stack.findIndex((s) => extraLibs().some((x) => x.id === s.id));
+      const cat = rootAt >= 0 ? (cloudNav.stack[rootAt + 1]?.name || '') : '';
+      // Ở gốc kho (danh sách thể loại) không mở sẵn thư mục con cho nhanh
+      await loadCloudItems(() => liveExtraList(cur.id, cat, rootAt !== cloudNav.stack.length - 1), `pub:${cur.id}`);
+      return;
+    }
+    await loadCloudItems(async () => [...mine, ...catalogList(await catalogWithExtras(), cur?.id || null)]);
     return;
   }
   $('cloudTitle').textContent = cur ? cur.name : sync.currentUser().providerName;
@@ -403,7 +456,7 @@ function renderCloudItems(items, have) {
       const cat = it.cat ? `<small class="cloud-cat">${esc(it.cat)}</small>` : '';
       b.innerHTML = `<span class="ic">${it.icon || (it.isFolder ? '📁' : /\.pdf$/i.test(it.name) ? '📄' : '📖')}</span><span class="nm">${esc(it.name)}${cat}</span><span class="sz">${size}</span>`;
       b.onclick = it.id === MY_DRIVE ? () => { $('cloudDialog').close(); openDriveDialog(sync.currentUser()); }
-        : it.isFolder ? () => { cloudNav.stack.push({ id: it.id, name: it.name }); $('cloudSearch').value = ''; showCloudFolder(); }
+        : it.isFolder ? () => { cloudNav.stack.push(it.live ? { id: it.id, name: it.name, live: true } : { id: it.id, name: it.name }); $('cloudSearch').value = ''; showCloudFolder(); }
           : it.pub ? () => downloadAndOpenPublic(it) : () => downloadAndOpen(it.id, it.name);
       list.appendChild(b);
     }
@@ -586,7 +639,7 @@ $('cloudSearchForm').onsubmit = (e) => {
   $('cloudPath').textContent = sync.currentUser().providerName;
   $('cloudUp').querySelector('span').textContent = 'Quay lại';
   cloudNav.searching = true;
-  if (cloudNav.catalog) { $('cloudPath').textContent = cloudConfig.libraryName || 'Thư viện'; loadCloudItems(async () => catalogSearch(await loadCatalog(), q)); return; }
+  if (cloudNav.catalog) { $('cloudPath').textContent = cloudConfig.libraryName || 'Thư viện'; loadCloudItems(async () => catalogSearch(await catalogWithExtras(), q)); return; }
   loadCloudItems(() => sync.search(q));
 };
 
