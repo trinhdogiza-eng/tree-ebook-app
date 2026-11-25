@@ -13,7 +13,7 @@ import {
 
 /* global ePub */
 const APP_VERSION = '2.23';
-const APP_BUILD = 70; // phải trùng số trong CACHE của sw.js ('epub-reader-v70') — tăng mỗi lần phát hành
+const APP_BUILD = 71; // phải trùng số trong CACHE của sw.js ('epub-reader-v71') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 // iPhone/iPad mở từ màn hình chính, chế độ toàn màn hình (black-translucent): iOS báo vùng hiển thị (innerHeight)
 // hụt đúng bằng thanh trạng thái so với màn hình thật → đo khoảng hụt và để CSS kéo đáy màn hình app xuống bù.
@@ -26,7 +26,11 @@ function fixIosGap() {
     gap = Math.max(0, Math.min(90, Math.round(full - window.innerHeight)));
   }
   document.documentElement.style.setProperty('--ios-gap', `${gap}px`);
+  document.documentElement.classList.toggle('ios-gap', gap > 0);
+  if (gap > 0) window.scrollTo(0, 0);
 }
+// Trang không được cuộn lệch (iOS đôi khi tự cuộn khi bàn phím đóng) → luôn về đầu
+addEventListener('scroll', () => { if (document.documentElement.classList.contains('ios-gap') && window.scrollY) window.scrollTo(0, 0); }, { passive: true });
 fixIosGap();
 addEventListener('orientationchange', () => setTimeout(fixIosGap, 400));
 addEventListener('pageshow', fixIosGap);
