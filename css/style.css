@@ -77,6 +77,26 @@ html.ios-gap #library.view.active, html.ios-gap #reader.view.active { position: 
 .dot.on { background: #3a9d5d; }
 .dot.off { background: #c9a227; }
 
+/* ---------- Android toàn màn hình: dải đồng hồ + pin do app tự vẽ (thanh trạng thái của máy bị ẩn) ---------- */
+.sysbar { display: none; }
+body.has-sysbar .sysbar {
+  display: flex; position: absolute; top: var(--safe-top); left: 0; right: 0; height: 24px; z-index: 5;
+  align-items: center; justify-content: space-between; padding: 0 18px; pointer-events: none;
+  font-size: 13px; font-weight: 600; color: var(--text); opacity: .72; font-variant-numeric: tabular-nums;
+}
+.sb-bat { display: inline-flex; align-items: center; gap: 5px; }
+.sb-bat.low { color: #c0392b; opacity: 1; }
+.sb-cell {
+  display: inline-block; position: relative; width: 22px; height: 11px; padding: 1px; box-sizing: border-box;
+  border: 1.5px solid currentColor; border-radius: 3px;
+}
+.sb-cell::after { content: ''; position: absolute; right: -4px; top: 2.5px; width: 2px; height: 4px; background: currentColor; border-radius: 0 1px 1px 0; }
+.sb-cell b { display: block; height: 100%; background: currentColor; border-radius: 1px; }
+body.has-sysbar .topbar { padding-top: calc(14px + 24px + var(--safe-top)); }
+body.has-sysbar .reader-bar.top { padding-top: calc(24px + var(--safe-top)); }
+body.has-sysbar #viewer { top: calc(28px + 24px + var(--safe-top)); }
+@media (max-width: 600px) { body.has-sysbar #viewer { top: calc(22px + 24px + var(--safe-top)); } }
+
 /* ---------- Thư viện ---------- */
 .topbar {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
