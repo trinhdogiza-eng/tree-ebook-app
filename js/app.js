@@ -13,7 +13,7 @@ import {
 
 /* global ePub */
 const APP_VERSION = '2.23';
-const APP_BUILD = 60; // phải trùng số trong CACHE của sw.js ('epub-reader-v60') — tăng mỗi lần phát hành
+const APP_BUILD = 61; // phải trùng số trong CACHE của sw.js ('epub-reader-v61') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -265,7 +265,9 @@ const MY_DRIVE = '__mydrive';
 function catalogReady() { return !!cloudConfig.catalogFileId && !!cloudConfig.googleApiKey; }
 async function loadCatalog(force = false) {
   if (!catalog) { try { catalog = JSON.parse(localStorage.getItem(K_CATALOG) || 'null'); } catch { catalog = null; } }
-  const stale = !catalog || Date.now() - (catalog.fetchedAt || 0) > 60 * 60 * 1000;
+  // Danh mục cũ chưa có kho sách mới thêm (vd. "Kho sách 2") → coi như cũ, tải lại ngay mỗi lần mở
+  const missingKho = !!catalog && extraLibs().some((x) => !catalog.f?.some((f) => f[0] === x.id));
+  const stale = !catalog || missingKho || Date.now() - (catalog.fetchedAt || 0) > 60 * 60 * 1000;
   if (catalog && !stale && !force) return catalog;
   catalogLoading ||= sync.fetchCatalog(cloudConfig.catalogFileId, cloudConfig.googleApiKey).then((c) => {
     c.fetchedAt = Date.now();
@@ -2124,6 +2126,15 @@ for (const dlg of document.querySelectorAll('dialog')) {
 
 $('btnToc').onclick = () => { $('settingsPanel').hidden = true; $('tocPanel').hidden = !$('tocPanel').hidden; document.querySelector('#tocList a.current')?.scrollIntoView({ block: 'center' }); };
 $('btnSettings').onclick = () => { $('tocPanel').hidden = true; $('settingsPanel').hidden = !$('settingsPanel').hidden; fillVoices(); };
+// Menu Aa chia 3 thẻ: Văn bản · Trang · Đọc to (nhớ thẻ đang mở)
+function setSettingsTab(tab) {
+  if (!document.querySelector(`.set-tab[data-tab="${tab}"]`)) tab = 'text';
+  document.querySelectorAll('.set-tabs [data-tab]').forEach((b) => { b.classList.toggle('on', b.dataset.tab === tab); b.setAttribute('aria-selected', b.dataset.tab === tab); });
+  document.querySelectorAll('.set-tab').forEach((p) => { p.hidden = p.dataset.tab !== tab; });
+  lsSet('setTab', tab);
+}
+document.querySelectorAll('.set-tabs [data-tab]').forEach((b) => { b.onclick = () => setSettingsTab(b.dataset.tab); });
+setSettingsTab(lsGet('setTab', 'text'));
 document.querySelectorAll('[data-close]').forEach((b) => { b.onclick = () => { $(b.dataset.close).hidden = true; }; });
 $('fontUp').onclick = () => (R.kind === 'pdf' ? R.pdf?.zoomStep(1) : changeSetting({ fontSize: Math.min(200, settings.fontSize + 10) }));
 $('fontDown').onclick = () => (R.kind === 'pdf' ? R.pdf?.zoomStep(-1) : changeSetting({ fontSize: Math.max(60, settings.fontSize - 10) }));
