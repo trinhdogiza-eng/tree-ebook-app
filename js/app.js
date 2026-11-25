@@ -13,7 +13,7 @@ import {
 
 /* global ePub */
 const APP_VERSION = '2.23';
-const APP_BUILD = 69; // phải trùng số trong CACHE của sw.js ('epub-reader-v69') — tăng mỗi lần phát hành
+const APP_BUILD = 70; // phải trùng số trong CACHE của sw.js ('epub-reader-v70') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 // iPhone/iPad mở từ màn hình chính, chế độ toàn màn hình (black-translucent): iOS báo vùng hiển thị (innerHeight)
 // hụt đúng bằng thanh trạng thái so với màn hình thật → đo khoảng hụt và để CSS kéo đáy màn hình app xuống bù.
