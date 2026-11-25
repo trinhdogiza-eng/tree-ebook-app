@@ -13,18 +13,26 @@ import {
 
 /* global ePub */
 const APP_VERSION = '2.23';
-const APP_BUILD = 71; // phải trùng số trong CACHE của sw.js ('epub-reader-v71') — tăng mỗi lần phát hành
+const APP_BUILD = 72; // phải trùng số trong CACHE của sw.js ('epub-reader-v72') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 // iPhone/iPad mở từ màn hình chính, chế độ toàn màn hình (black-translucent): iOS báo vùng hiển thị (innerHeight)
 // hụt đúng bằng thanh trạng thái so với màn hình thật → đo khoảng hụt và để CSS kéo đáy màn hình app xuống bù.
-// Chỉ đo lúc mở app / xoay máy (không đo khi bàn phím bật lên làm innerHeight nhỏ lại).
+// Lúc vừa mở, iOS có thể báo ĐỦ chiều cao rồi một lúc sau mới đổi sang chiều cao hụt → đo lại nhiều lần
+// (mở app, sau 0,3/1/2,5 giây, khi đổi kích thước, khi quay lại app); bỏ qua lúc bàn phím đang mở.
+let iosGap = -1;
 function fixIosGap() {
   let gap = 0;
   if (navigator.standalone === true) {
+    const ae = document.activeElement;
+    if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) && iosGap >= 0) return; // bàn phím đang mở
     const portrait = window.innerHeight >= window.innerWidth;
     const full = portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
-    gap = Math.max(0, Math.min(90, Math.round(full - window.innerHeight)));
+    gap = Math.round(full - window.innerHeight);
+    if (gap > 90) { if (iosGap >= 0) return; gap = 0; } // chênh quá nhiều = bàn phím, không phải lỗi này
+    gap = Math.max(0, gap);
   }
+  if (gap === iosGap) return;
+  iosGap = gap;
   document.documentElement.style.setProperty('--ios-gap', `${gap}px`);
   document.documentElement.classList.toggle('ios-gap', gap > 0);
   if (gap > 0) window.scrollTo(0, 0);
@@ -32,8 +40,12 @@ function fixIosGap() {
 // Trang không được cuộn lệch (iOS đôi khi tự cuộn khi bàn phím đóng) → luôn về đầu
 addEventListener('scroll', () => { if (document.documentElement.classList.contains('ios-gap') && window.scrollY) window.scrollTo(0, 0); }, { passive: true });
 fixIosGap();
+for (const ms of [300, 1000, 2500]) setTimeout(fixIosGap, ms);
+addEventListener('resize', () => setTimeout(fixIosGap, 50));
+window.visualViewport?.addEventListener('resize', () => setTimeout(fixIosGap, 50));
 addEventListener('orientationchange', () => setTimeout(fixIosGap, 400));
 addEventListener('pageshow', fixIosGap);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(fixIosGap, 200); });
 $('appVersion').textContent =`Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const pctText = (p) => `${Math.round((p || 0) * 100)}%`;
@@ -2333,6 +2345,7 @@ $('btnSettings').onclick = () => { $('tocPanel').hidden = true; $('settingsPanel
 // Số đo màn hình thật (để sửa lỗi toàn màn hình trên từng loại máy): hiện ở dòng cuối menu Aa
 function showScreenInfo() {
   try {
+    fixIosGap();
     const probe = document.createElement('div');
     probe.style.cssText = 'position:fixed;visibility:hidden;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)';
     document.body.appendChild(probe);
