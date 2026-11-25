@@ -38,7 +38,9 @@ code { font-size: .9em; background: var(--line); padding: 1px 5px; border-radius
 /* Ghim vào đủ 4 mép màn hình (không dùng 100dvh): ở chế độ toàn màn hình trên iPhone (black-translucent),
    100dvh hụt đúng bằng thanh trạng thái → đáy màn hình đọc bị thiếu 1 dải, hiệu ứng lật không xuống tới đáy. */
 .view.active { display: flex; flex-direction: column; }
-#library.view.active, #reader.view.active { position: fixed; inset: 0; height: auto; }
+/* --ios-gap: iPhone toàn màn hình (black-translucent) tính vùng hiển thị hụt đúng bằng thanh trạng thái → kể cả
+   "bottom: 0" cũng dừng cách đáy màn hình ~50pt. app.js đo khoảng hụt thật (screen.height − innerHeight) và kéo đáy xuống bù. */
+#library.view.active, #reader.view.active { position: fixed; top: 0; left: 0; right: 0; bottom: calc(-1 * var(--ios-gap, 0px)); height: auto; }
 
 /* ---------- Nút ---------- */
 .btn {
