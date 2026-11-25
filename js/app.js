@@ -13,9 +13,24 @@ import {
 
 /* global ePub */
 const APP_VERSION = '2.23';
-const APP_BUILD = 67; // phải trùng số trong CACHE của sw.js ('epub-reader-v67') — tăng mỗi lần phát hành
+const APP_BUILD = 68; // phải trùng số trong CACHE của sw.js ('epub-reader-v68') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
-$('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
+// iPhone/iPad mở từ màn hình chính, chế độ toàn màn hình (black-translucent): iOS báo vùng hiển thị (innerHeight)
+// hụt đúng bằng thanh trạng thái so với màn hình thật → đo khoảng hụt và để CSS kéo đáy màn hình app xuống bù.
+// Chỉ đo lúc mở app / xoay máy (không đo khi bàn phím bật lên làm innerHeight nhỏ lại).
+function fixIosGap() {
+  let gap = 0;
+  if (navigator.standalone === true) {
+    const portrait = window.innerHeight >= window.innerWidth;
+    const full = portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
+    gap = Math.max(0, Math.min(90, Math.round(full - window.innerHeight)));
+  }
+  document.documentElement.style.setProperty('--ios-gap', `${gap}px`);
+}
+fixIosGap();
+addEventListener('orientationchange', () => setTimeout(fixIosGap, 400));
+addEventListener('pageshow', fixIosGap);
+$('appVersion').textContent =`Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const pctText = (p) => `${Math.round((p || 0) * 100)}%`;
 
