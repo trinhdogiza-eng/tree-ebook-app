@@ -35,7 +35,10 @@ button, input, select { font: inherit; color: inherit; }
 code { font-size: .9em; background: var(--line); padding: 1px 5px; border-radius: 4px; }
 
 .view { display: none; height: 100dvh; }
+/* Ghim vào đủ 4 mép màn hình (không dùng 100dvh): ở chế độ toàn màn hình trên iPhone (black-translucent),
+   100dvh hụt đúng bằng thanh trạng thái → đáy màn hình đọc bị thiếu 1 dải, hiệu ứng lật không xuống tới đáy. */
 .view.active { display: flex; flex-direction: column; }
+#library.view.active, #reader.view.active { position: fixed; inset: 0; height: auto; }
 
 /* ---------- Nút ---------- */
 .btn {
