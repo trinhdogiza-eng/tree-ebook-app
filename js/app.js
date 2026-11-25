@@ -13,7 +13,7 @@ import {
 
 /* global ePub */
 const APP_VERSION = '2.23';
-const APP_BUILD = 64; // phải trùng số trong CACHE của sw.js ('epub-reader-v64') — tăng mỗi lần phát hành
+const APP_BUILD = 65; // phải trùng số trong CACHE của sw.js ('epub-reader-v65') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -939,6 +939,9 @@ async function createRendition(cfi) {
   if (speaker && speaker.state !== 'idle') { ttsRestartAfterRender = speaker.state === 'playing'; speaker.stop(true); ttsUI('idle'); }
   if (R.rendition) { R.rendition.destroy(); R.rendition = null; }
   $('viewer').innerHTML = '';
+  // Truyện tranh bố cục cố định: bỏ lề trái/phải của khung đọc → trang truyện to hết bề ngang màn hình
+  try { await R.book.loaded?.metadata; } catch { /* bỏ qua */ }
+  $('reader').classList.toggle('fxl', R.book.package?.metadata?.layout === 'pre-paginated');
   const scrolled = settings.flow === 'scrolled-doc';
   const rendition = R.book.renderTo('viewer', {
     width: '100%', height: '100%',
@@ -1026,11 +1029,27 @@ function injectStyle(contents) {
   const baseFs = Number(doc.documentElement.dataset.baseFs) || 16;
   const bodyFs = Math.round(baseFs * settings.fontSize) / 100;
   const recolor = settings.theme !== 'light';
-  // Trang chỉ có ảnh (truyện tranh, ảnh bìa, trang minh hoạ): gần như không có chữ → phóng ảnh vừa khít trang
+  // Sách bố cục cố định (truyện tranh chuyển từ MOBI/AZW3: <meta name="viewport" content="width=620, height=1024">):
+  // epub.js vẽ trang ở cỡ gốc rồi thu nhỏ cả trang cho vừa khung → ảnh phải lấp đúng khung gốc (không giới hạn theo
+  // chiều cao màn hình), và căn trang vào giữa theo chiều dọc.
+  let fxlPad = 0;
+  let fxl = false;
+  try {
+    const vp = doc.querySelector('meta[name="viewport"]')?.getAttribute('content') || '';
+    const vw = Number(vp.match(/width\s*=\s*(\d+)/)?.[1] || 0), vh = Number(vp.match(/height\s*=\s*(\d+)/)?.[1] || 0);
+    fxl = vw > 0 && vh > 0;
+    if (fxl) {
+      const box = $('viewer');
+      const sc = Math.min(box.clientWidth / vw, box.clientHeight / vh);
+      fxlPad = Math.max(0, Math.floor((box.clientHeight - vh * sc) / 2));
+    }
+    doc.documentElement.classList.toggle('tree-fxl', fxl);
+  } catch { /* bỏ qua */ }
+  // Trang chỉ có ảnh (truyện tranh, ảnh bìa, trang minh hoạ) ở sách thường: gần như không có chữ → phóng ảnh vừa khít trang
   try {
     const imgs = doc.body.querySelectorAll('img, svg').length;
     const txt = (doc.body.textContent || '').replace(/\s+/g, '').length;
-    doc.documentElement.classList.toggle('tree-imgpage', imgs > 0 && txt <= 12 * imgs);
+    doc.documentElement.classList.toggle('tree-imgpage', !fxl && imgs > 0 && txt <= 12 * imgs);
   } catch { /* bỏ qua */ }
   style.textContent = `
     html { font-size: ${settings.fontSize}% !important; background: ${t.bg} !important; touch-action: ${settings.flow === 'paginated' ? 'none' : 'pan-y'}; -webkit-tap-highlight-color: transparent; }
@@ -1081,6 +1100,11 @@ function injectStyle(contents) {
       display: block !important; width: 100% !important; height: calc(100vh - 4px) !important;
       max-width: 100% !important; max-height: calc(100vh - 4px) !important;
       object-fit: contain !important; margin: 0 auto !important; break-inside: avoid; page-break-inside: avoid;
+    }
+    /* Bố cục cố định: ảnh lấp trọn khung trang gốc; cả trang (đã thu nhỏ) nằm giữa màn hình theo chiều dọc */
+    html.tree-fxl { padding-top: ${fxlPad}px !important; }
+    html.tree-fxl body img, html.tree-fxl body svg {
+      width: 100% !important; height: auto !important; max-width: 100% !important; max-height: none !important; object-fit: contain;
     }
   `;
 }
