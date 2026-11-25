@@ -41,6 +41,12 @@ code { font-size: .9em; background: var(--line); padding: 1px 5px; border-radius
 /* --ios-gap: iPhone toàn màn hình (black-translucent) tính vùng hiển thị hụt đúng bằng thanh trạng thái → kể cả
    "bottom: 0" cũng dừng cách đáy màn hình ~50pt. app.js đo khoảng hụt thật (screen.height − innerHeight) và kéo đáy xuống bù. */
 #library.view.active, #reader.view.active { position: fixed; top: 0; left: 0; right: 0; bottom: calc(-1 * var(--ios-gap, 0px)); height: auto; }
+/* iPhone bị hụt (html.ios-gap, do app.js gắn khi đo được khoảng hụt): iOS cắt MỌI lớp "position: fixed" tại đáy sai
+   (873 thay vì 932) nhưng vẫn vẽ nội dung thường xuống tận đáy → đặt màn hình app như nội dung trang thường, cao đủ
+   màn hình thật, và khoá cuộn trang. */
+html.ios-gap { height: calc(100% + var(--ios-gap, 0px)); overflow: hidden; }
+html.ios-gap body { height: 100%; position: relative; overflow: hidden; overscroll-behavior: none; }
+html.ios-gap #library.view.active, html.ios-gap #reader.view.active { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
 
 /* ---------- Nút ---------- */
 .btn {
