@@ -13,7 +13,7 @@ import {
 
 /* global ePub */
 const APP_VERSION = '2.23';
-const APP_BUILD = 68; // phải trùng số trong CACHE của sw.js ('epub-reader-v68') — tăng mỗi lần phát hành
+const APP_BUILD = 69; // phải trùng số trong CACHE của sw.js ('epub-reader-v69') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 // iPhone/iPad mở từ màn hình chính, chế độ toàn màn hình (black-translucent): iOS báo vùng hiển thị (innerHeight)
 // hụt đúng bằng thanh trạng thái so với màn hình thật → đo khoảng hụt và để CSS kéo đáy màn hình app xuống bù.
@@ -2325,7 +2325,25 @@ for (const dlg of document.querySelectorAll('dialog')) {
 }
 
 $('btnToc').onclick = () => { $('settingsPanel').hidden = true; $('tocPanel').hidden = !$('tocPanel').hidden; document.querySelector('#tocList a.current')?.scrollIntoView({ block: 'center' }); };
-$('btnSettings').onclick = () => { $('tocPanel').hidden = true; $('settingsPanel').hidden = !$('settingsPanel').hidden; fillVoices(); };
+$('btnSettings').onclick = () => { $('tocPanel').hidden = true; $('settingsPanel').hidden = !$('settingsPanel').hidden; fillVoices(); showScreenInfo(); };
+// Số đo màn hình thật (để sửa lỗi toàn màn hình trên từng loại máy): hiện ở dòng cuối menu Aa
+function showScreenInfo() {
+  try {
+    const probe = document.createElement('div');
+    probe.style.cssText = 'position:fixed;visibility:hidden;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)';
+    document.body.appendChild(probe);
+    const ps = getComputedStyle(probe); const st = parseFloat(ps.paddingTop) || 0; const sb = parseFloat(ps.paddingBottom) || 0;
+    probe.remove();
+    const rr = $('reader').getBoundingClientRect();
+    const mode = navigator.standalone ? 'app' : matchMedia('(display-mode: fullscreen)').matches ? 'fs' : matchMedia('(display-mode: standalone)').matches ? 'sa' : 'web';
+    const sbs = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')?.content || '';
+    const vv = window.visualViewport ? Math.round(window.visualViewport.height) : '-';
+    const info = `Màn ${screen.width}×${screen.height} · vùng ${innerWidth}×${innerHeight} (vv ${vv}, html ${document.documentElement.clientHeight}) · tai thỏ ${st}/${sb} · bù ${getComputedStyle(document.documentElement).getPropertyValue('--ios-gap').trim() || '0'} · đọc ${Math.round(rr.top)}→${Math.round(rr.bottom)} · ${mode} ${sbs.slice(0, 5)}`;
+    let el = $('screenInfo');
+    if (!el) { el = document.createElement('p'); el.id = 'screenInfo'; el.className = 'hint version'; el.style.cssText = 'font-size:11px;opacity:.75;margin:0;padding:0 16px 10px;text-align:center'; $('appVersion').after(el); }
+    el.textContent = info;
+  } catch { /* bỏ qua */ }
+}
 // Menu Aa chia 3 thẻ: Văn bản · Trang · Đọc to (nhớ thẻ đang mở)
 function setSettingsTab(tab) {
   if (!document.querySelector(`.set-tab[data-tab="${tab}"]`)) tab = 'text';
