@@ -13,7 +13,7 @@ import {
 
 /* global ePub */
 const APP_VERSION = '2.23';
-const APP_BUILD = 63; // phải trùng số trong CACHE của sw.js ('epub-reader-v63') — tăng mỗi lần phát hành
+const APP_BUILD = 64; // phải trùng số trong CACHE của sw.js ('epub-reader-v64') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} (bản cập nhật ${APP_BUILD}) · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1026,6 +1026,12 @@ function injectStyle(contents) {
   const baseFs = Number(doc.documentElement.dataset.baseFs) || 16;
   const bodyFs = Math.round(baseFs * settings.fontSize) / 100;
   const recolor = settings.theme !== 'light';
+  // Trang chỉ có ảnh (truyện tranh, ảnh bìa, trang minh hoạ): gần như không có chữ → phóng ảnh vừa khít trang
+  try {
+    const imgs = doc.body.querySelectorAll('img, svg').length;
+    const txt = (doc.body.textContent || '').replace(/\s+/g, '').length;
+    doc.documentElement.classList.toggle('tree-imgpage', imgs > 0 && txt <= 12 * imgs);
+  } catch { /* bỏ qua */ }
   style.textContent = `
     html { font-size: ${settings.fontSize}% !important; background: ${t.bg} !important; touch-action: ${settings.flow === 'paginated' ? 'none' : 'pan-y'}; -webkit-tap-highlight-color: transparent; }
     body { font-size: ${bodyFs}px !important; background: ${t.bg} !important; color: ${t.fg} !important; -webkit-text-size-adjust: none; }
@@ -1065,6 +1071,17 @@ function injectStyle(contents) {
     body * { column-count: auto !important; column-width: auto !important; columns: auto !important; }
     /* Hiệu ứng động tự chạy trong sách (hoa rơi, tim bay…) bắt máy vẽ lại liên tục → nóng máy */
     *, *::before, *::after { animation: none !important; transition: none !important; }
+    /* Trang chỉ có ảnh (truyện tranh): mỗi ảnh chiếm trọn 1 trang, giữ tỉ lệ, căn giữa (kể cả ảnh nhỏ được phóng to) */
+    html.tree-imgpage body { margin: 0 !important; }
+    html.tree-imgpage body *:not(img):not(svg):not(image) {
+      margin-top: 0 !important; margin-bottom: 0 !important; padding-top: 0 !important; padding-bottom: 0 !important;
+      line-height: 0 !important; text-indent: 0 !important;
+    }
+    html.tree-imgpage body img, html.tree-imgpage body svg {
+      display: block !important; width: 100% !important; height: calc(100vh - 4px) !important;
+      max-width: 100% !important; max-height: calc(100vh - 4px) !important;
+      object-fit: contain !important; margin: 0 auto !important; break-inside: avoid; page-break-inside: avoid;
+    }
   `;
 }
 // Chiều cao tối đa cho ảnh = chiều cao trang trừ lề trên/dưới của sách (để ảnh không bị cắt sang trang sau)
@@ -1452,8 +1469,12 @@ function curlState(layer) {
 // Vẽ trạng thái lật ở tiến độ t (0 = phẳng, 1 = đã lật hết sang trái); lift: độ nhấc góc lên (theo tay kéo)
 function curlRender(st, t, lift = 0) {
   const { W, H, S, L } = st;
-  // Góc dưới-phải đi theo đường cong lên trên rồi sang trái (giống ngón tay lật trang)
-  const Mx = W - 2 * W * t, My = H - H * (0.32 * Math.sin(Math.PI * Math.min(1, t * 1.05)) + lift);
+  // Cả mép phải của trang lật sang trái, nếp gấp chạy suốt từ mép dưới lên mép trên màn hình (như Apple Books);
+  // góc dưới chỉ nhấc rất nhẹ (6%) để phần dưới đi trước một chút. Kéo tay lên/xuống → góc nhấc theo ngón tay.
+  // Độ nghiêng của nếp gấp tính theo bề ngang (không theo chiều cao): mép dưới chỉ đi trước mép trên ~12% bề ngang,
+  // nên trên màn hình điện thoại (cao gấp đôi ngang) phần trên trang cũng lật gần cùng lúc với phần dưới.
+  const lean = 0.12 * W * Math.sin(Math.PI * Math.min(1, t));
+  const Mx = W - 2 * W * t, My = H - (2 * W * t * lean) / H - H * lift;
   let nx = W - Mx, ny = H - My, Px, Py;
   const len = Math.hypot(nx, ny);
   if (len < 0.5) { nx = 0.96; ny = 0.28; Px = W + 2; Py = H + 2; } // chưa gấp: nếp gấp nằm ngoài góc trang
@@ -1503,6 +1524,11 @@ function curlBegin(dir) {
   // Lật tới: trang đang lật = trang hiện tại, bên dưới là trang sau. Lật lùi: trang đang lật = trang trước.
   const clone = curlCloneFor(dir > 0 ? start : target);
   if (!clone) { curlCloneFor(start); return null; } // chưa sẵn → lần này dùng kiểu trượt
+  // Nhớ vị trí theo "chương + chỗ trong chương", KHÔNG theo toạ độ tuyệt đối: trong lúc lật, epub.js có thể gỡ
+  // bớt chương đã qua / chèn chương phía trước và tự dời scrollLeft → đặt lại toạ độ cũ sẽ nhảy nhiều trang.
+  const rel = (pos) => { const v = pageEls().find((e) => e.offsetLeft <= pos + 1 && pos < e.offsetLeft + e.offsetWidth - 1); return v ? { v, off: pos - v.offsetLeft } : null; };
+  const relStart = rel(start), relTarget = rel(target);
+  const absOf = (r) => (r && r.v.isConnected ? r.v.offsetLeft + r.off : null);
   const layer = curlLayer();
   curlBars(layer);
   const st = curlState(layer);
@@ -1520,6 +1546,7 @@ function curlBegin(dir) {
     },
     // commit = true: lật hẳn; false: trả trang về như cũ
     async end(commit, lift = lastLift) {
+      s.intent = commit;
       if (raf) { cancelAnimationFrame(raf); raf = 0; }
       const to = dir > 0 ? (commit ? 1 : 0) : (commit ? 0 : 1);
       const ms = 180 + 520 * Math.abs(to - s.t);
@@ -1531,13 +1558,17 @@ function curlBegin(dir) {
       finished = true;
       if (curlFinish === s.cut) curlFinish = null;
       layer.classList.remove('on');
-      const want = commit ? target : start;
-      if (c.scrollLeft !== want) { R.rendition.manager.ignore = false; c.scrollLeft = want; }
+      // Lật tới & lật hẳn: trang đã ở đúng chỗ từ lúc bắt đầu → không đụng tới vị trí cuộn
+      if (!(dir > 0 && commit)) {
+        const want = absOf(commit ? relTarget : relStart);
+        if (want != null && Math.abs(c.scrollLeft - want) > 1) { R.rendition.manager.ignore = false; c.scrollLeft = want; }
+      }
       R.rendition?.reportLocation();
       // Chuẩn bị sẵn bản sao cho lần lật sau (chương mới / sau khi đổi cỡ chữ)
       setTimeout(() => { const q = pager(); if (settings.pageAnim === 'curl' && q) curlCloneFor(q.c.scrollLeft); }, 50);
     },
-    cut() { curlAnimate.stop?.(); s.done(true); },
+    // Đang lật dở mà lật tiếp → kết thúc ngay theo đúng ý lần trước (thả tay chưa đủ xa thì trả về, không lật)
+    cut() { curlAnimate.stop?.(); s.done(s.intent ?? true); },
   };
   curlFinish = s.cut;
   return s;
@@ -1549,7 +1580,7 @@ async function curlTurn(dir) {
   await s.end(true);
   return true;
 }
-if (location.hostname === 'localhost') window.__curl = { begin: curlBegin };
+if (location.hostname === 'localhost') window.__curl = { begin: curlBegin, clone: curlCloneFor, sig: curlSig, pager };
 
 function slideIn(dir) {
   const v = $('viewer');
