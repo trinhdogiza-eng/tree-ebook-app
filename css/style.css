@@ -177,6 +177,8 @@ code { font-size: .9em; background: var(--line); padding: 1px 5px; border-radius
   body.single-page #reader:not(.is-pdf) #viewer { left: max(44px, calc(50% - 410px)); right: max(44px, calc(50% - 410px)); }
 }
 @media (max-width: 600px) { #viewer { inset: calc(22px + var(--safe-top)) 14px calc(22px + var(--safe-bottom)); } .pager { display: none; } }
+/* Truyện tranh bố cục cố định: trang chiếm hết bề ngang màn hình */
+@media (max-width: 600px) { #reader.fxl #viewer { left: 0; right: 0; } }
 .pager {
   position: absolute; top: 50%; transform: translateY(-50%); width: 40px; height: 80px;
   border: 0; background: none; font-size: 32px; color: var(--muted); cursor: pointer; opacity: .5;
