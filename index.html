@@ -112,7 +112,19 @@
     </aside>
 
     <aside id="settingsPanel" class="panel" hidden>
-      <div class="panel-head"><b>Hiển thị</b><button class="icon" data-close="settingsPanel">✕</button></div>
+      <!-- 3 thẻ cho gọn (kiểu Play Sách): Văn bản · Trang · Đọc to -->
+      <div class="set-tabs" role="tablist">
+        <button type="button" role="tab" data-tab="text" class="on">Văn bản</button>
+        <button type="button" role="tab" data-tab="page">Trang</button>
+        <button type="button" role="tab" data-tab="voice">Đọc to</button>
+      </div>
+      <div class="set-body">
+      <div class="set-tab" data-tab="text">
+      <div class="themes big" aria-label="Màu nền">
+        <button data-theme="light" class="sw light" aria-label="Sáng"><span>Sáng</span></button>
+        <button data-theme="sepia" class="sw sepia" aria-label="Giấy"><span>Giấy</span></button>
+        <button data-theme="dark" class="sw dark" aria-label="Tối"><span>Tối</span></button>
+      </div>
       <div class="setting">
         <span id="fontLabel">Cỡ chữ</span>
         <div class="stepper">
@@ -133,14 +145,8 @@
           <option value="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Không chân (Sans)</option>
         </select>
       </div>
-      <div class="setting">
-        <span>Nền</span>
-        <div class="themes">
-          <button data-theme="light" class="sw light" aria-label="Sáng"></button>
-          <button data-theme="sepia" class="sw sepia" aria-label="Giấy"></button>
-          <button data-theme="dark" class="sw dark" aria-label="Tối"></button>
-        </div>
       </div>
+      <div class="set-tab" data-tab="page" hidden>
       <div class="setting">
         <span>Kiểu đọc</span>
         <select id="flowMode">
@@ -170,6 +176,8 @@
           <option value="library">Vào thư viện</option>
         </select>
       </div>
+      </div>
+      <div class="set-tab" data-tab="voice" hidden>
       <div class="setting">
         <span>Bộ đọc</span>
         <select id="ttsEngineSel">
@@ -211,7 +219,9 @@
           <option value="2">2×</option>
         </select>
       </div>
+      </div>
       <p class="hint version" id="appVersion"></p>
+      </div>
     </aside>
   </section>
 
