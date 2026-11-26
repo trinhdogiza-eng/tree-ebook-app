@@ -12,8 +12,8 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.23';
-const APP_BUILD = 74; // phải trùng số trong CACHE của sw.js ('epub-reader-v74') — tăng mỗi lần phát hành
+const APP_VERSION = '2.24';
+const APP_BUILD = 75; // phải trùng số trong CACHE của sw.js ('epub-reader-v75') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 // iPhone/iPad mở từ màn hình chính, chế độ toàn màn hình (black-translucent): iOS báo vùng hiển thị (innerHeight)
 // hụt đúng bằng thanh trạng thái so với màn hình thật → đo khoảng hụt và để CSS kéo đáy màn hình app xuống bù.
@@ -82,10 +82,13 @@ if (!deviceId) { deviceId = Math.random().toString(36).slice(2) + Date.now().toS
 let deviceName = lsGet('deviceName', guessDeviceName());
 
 const settings = Object.assign(
-  { fontSize: 100, lineHeight: 1.5, fontFamily: '', theme: 'light', flow: 'paginated', pageAnim: 'curl', ttsRate: 1.5, ttsVoice: '', ttsEngine: 'auto', gVoice: '', bgVoice: 'vi_VN-vais1000-medium', openVoice: 'device', startView: 'resume', spread: 'single' },
+  { fontSize: 100, lineHeight: 1.5, fontFamily: '', theme: 'light', flow: 'paginated', pageAnim: 'curl3d', ttsRate: 1.5, ttsVoice: '', ttsEngine: 'auto', gVoice: '', bgVoice: 'vi_VN-vais1000-medium', openVoice: 'device', startView: 'resume', spread: 'single', justify: true, pageAnim3d: 1 },
   lsGet('settings', {}),
 );
 const saveSettings = () => lsSet('settings', settings);
+// Bản 2.24: lật giấy 3D thành mặc định (người đang dùng lật giấy phẳng được chuyển 1 lần, vẫn chọn lại được trong Aa)
+if (!settings.pageAnim3d) { if (settings.pageAnim === 'curl') settings.pageAnim = 'curl3d'; settings.pageAnim3d = 1; saveSettings(); }
+const isCurl = () => settings.pageAnim === 'curl' || settings.pageAnim === 'curl3d';
 // Hiệu ứng "Lật giấy" mới: máy đang dùng kiểu Trượt (mặc định cũ) chuyển sang 1 lần; sau đó tuỳ người dùng chọn
 if (!lsGet('curlIntro', false)) {
   if (settings.pageAnim === 'slide') { settings.pageAnim = 'curl'; saveSettings(); }
@@ -888,37 +891,148 @@ async function openBook(id) {
     R.book.loaded.navigation.then((nav) => { R.toc = nav.toc; R.flatToc = flatten(nav.toc); renderToc(); }).catch(() => {});
   }
 
-  // Chọn vị trí bắt đầu: bản mới nhất giữa máy này và đám mây
-  let remote = null;
-  if (sync.currentUser()) {
-    remote = await Promise.race([sync.fetchOne(id).catch(() => null), new Promise((r) => setTimeout(() => r(null), 3000))]);
-  }
+  // Mở ngay tại vị trí đã lưu trên máy này (không chờ đám mây); vị trí trên đám mây kiểm tra ngầm song song
   // line = đúng câu đang đọc (CFI của câu) → máy khác mở ra đúng trang chứa câu đó và đọc tiếp từ câu đó
-  let start = local?.line || local?.cfi || null;
+  const remoteP = sync.currentUser() ? sync.fetchOne(id).catch(() => null) : Promise.resolve(null);
+  const start = local?.line || local?.cfi || null;
   R.line = local?.line || null;
-  let fromOther = null;
-  if (remote?.cfi && (remote.updatedAt || 0) > (local?.updatedAt || 0)) {
-    start = remote.line || remote.cfi;
-    R.line = remote.line || null;
-    R.percent = remote.percent || R.percent;
-    if (remote.deviceId !== deviceId) fromOther = remote.deviceName || 'thiết bị khác';
-  }
-  R.lastSavedAt = Math.max(local?.updatedAt || 0, remote?.updatedAt || 0);
+  R.lastSavedAt = local?.updatedAt || 0;
+  R.movedSinceOpen = false;
+  R.openedAt = performance.now();
 
   if (R.kind === 'pdf') { if (!(await openPdfReader(file.data, start))) return; }
   else await createRendition(start);
-  if (fromOther) {
-    toast(`Đã chuyển đến ${R.line ? 'đúng câu' : 'vị trí'} bạn đọc trên ${fromOther}`, null, null, 3500);
-    if (R.line) flashLine(R.line);
-  }
+  R.openMs = Math.round(performance.now() - R.openedAt);
   updateSyncText();
+  wakeUpdate(true);
+  remoteP.then((remote) => applyRemoteOnOpen(id, local, remote));
 
   R.unwatch = sync.watchOne(id, onRemoteChange);
-  if (R.kind === 'epub') loadLocations(id);
+  if (R.kind === 'epub') {
+    // Tính số trang/phần trăm khi máy rảnh, sau khi trang đầu đã hiện (không làm khựng lúc mở)
+    const idle = window.requestIdleCallback || ((f) => setTimeout(f, 1200));
+    idle(() => { if (R.id === id) loadLocations(id); }, { timeout: 2500 });
+  }
   // Nạp sẵn giọng AI lúc vừa mở sách (khi máy sẽ dùng nó) → lúc bấm 🔊 / khoá màn hình không phải nạp trùng lúc phát
   if (bgAiOn() && aiStored[settings.bgVoice] && (aiAlways() || /Android/i.test(navigator.userAgent))) {
     setTimeout(() => { if (R.id === id) aiWarmup(settings.bgVoice).catch(() => {}); }, 1500);
   }
+}
+
+/* ----- Giữ màn hình sáng khi đang đọc (tự thôi sau 10 phút không lật trang, trừ khi đang nghe đọc) ----- */
+let wakeLock = null, wakeBusy = false, wakeTouch = 0;
+async function wakeUpdate(activity) {
+  if (activity) wakeTouch = Date.now();
+  if (!('wakeLock' in navigator) || wakeBusy) return;
+  const playing = typeof speaker !== 'undefined' && speaker?.state === 'playing';
+  const want = !!R.id && !document.hidden && (playing || Date.now() - wakeTouch < 10 * 60 * 1000);
+  wakeBusy = true;
+  try {
+    if (want && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } else if (!want && wakeLock) {
+      const w = wakeLock; wakeLock = null; await w.release();
+    }
+  } catch { wakeLock = null; } finally { wakeBusy = false; }
+}
+setInterval(() => wakeUpdate(false), 60 * 1000);
+
+/* ----- Thời gian đọc: "còn ~X phút hết chương" + thống kê mỗi ngày ----- */
+const K_STATS = 'readStats', K_SPEED = 'readSpeed';
+let stats = lsGet(K_STATS, null) || { days: {}, done: [] };
+let speed = lsGet(K_SPEED, null) || { key: '', samples: [] };   // giây/trang theo cỡ chữ & khổ màn hình
+let lastTurn = null;                                            // { t, page, total, href, key, broken }
+const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const layoutKey = () => `${settings.fontSize}|${settings.lineHeight}|${settings.fontFamily}|${settings.spread}|${innerWidth}x${innerHeight}`;
+let statsPushTimer = null;
+function saveStats() {
+  lsSet(K_STATS, stats);
+  clearTimeout(statsPushTimer);
+  statsPushTimer = setTimeout(() => { if (sync.currentUser()) sync.setPref('readStats', stats).catch(() => {}); }, 60 * 1000);
+}
+function mergeCloudStats() {
+  const c = sync.getPref('readStats');
+  if (!c?.days) return;
+  for (const [d, sec] of Object.entries(c.days)) stats.days[d] = Math.max(stats.days[d] || 0, sec);
+  if (Array.isArray(c.done)) for (const id of c.done) if (!stats.done.includes(id)) stats.done.push(id);
+  lsSet(K_STATS, stats);
+}
+function addReadSeconds(sec) {
+  if (!(sec > 0)) return;
+  const k = dayKey();
+  stats.days[k] = Math.round((stats.days[k] || 0) + sec);
+  saveStats();
+}
+// Gọi mỗi lần lật trang (loc) hoặc khi đóng sách (null)
+function readTick(loc) {
+  const now = Date.now();
+  if (lastTurn && !document.hidden) {
+    const dwell = (now - lastTurn.t) / 1000;
+    addReadSeconds(Math.min(dwell, 300)); // bỏ máy đó lâu: chỉ tính tối đa 5 phút
+    const st = loc?.start;
+    // Tốc độ đọc: chỉ lấy lượt đọc hết 1 trang rồi sang đúng trang kế trong cùng chương (bỏ lượt lật lướt < 2 giây
+    // và lượt bỏ máy > 5 phút); đổi cỡ chữ/khổ màn hình → đo lại từ đầu
+    const key = layoutKey();
+    if (st && !lastTurn.broken && dwell >= 2 && dwell <= 300 && lastTurn.key === key
+        && st.href === lastTurn.href && st.displayed?.page === lastTurn.page + 1) {
+      if (speed.key !== key) speed = { key, samples: [] };
+      speed.samples.push(Math.round(dwell * 10) / 10);
+      if (speed.samples.length > 30) speed.samples.shift();
+      lsSet(K_SPEED, speed);
+    }
+  }
+  const st = loc?.start;
+  lastTurn = loc ? { t: now, page: st?.displayed?.page, total: st?.displayed?.total, href: st?.href, key: layoutKey() } : null;
+  if (R.id && R.percent >= 0.985 && !stats.done.includes(R.id)) { stats.done.push(R.id); saveStats(); }
+}
+document.addEventListener('visibilitychange', () => {
+  if (lastTurn) {
+    if (document.hidden) { addReadSeconds(Math.min((Date.now() - lastTurn.t) / 1000, 300)); lastTurn.broken = true; }
+    lastTurn.t = Date.now();
+  }
+  wakeUpdate(!document.hidden);
+});
+function chapterLeftText() {
+  if (R.kind !== 'epub' || !lastTurn?.total || speed.key !== layoutKey() || speed.samples.length < 3) return '';
+  const sorted = [...speed.samples].sort((a, b) => a - b);
+  const med = sorted[Math.floor(sorted.length / 2)];
+  const pagesLeft = lastTurn.total - lastTurn.page;
+  if (pagesLeft <= 0) return 'trang cuối chương';
+  const min = Math.round((pagesLeft * med) / 60);
+  return min < 1 ? 'còn < 1 phút hết chương' : `còn ~${min} phút hết chương`;
+}
+function openStats() {
+  mergeCloudStats();
+  const fmt = (sec) => { const m = Math.round(sec / 60); return m < 60 ? `${m} phút` : `${Math.floor(m / 60)} giờ ${m % 60 ? `${m % 60} phút` : ''}`.trim(); };
+  const days = [];
+  for (let i = 6; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); days.push(d); }
+  const vals = days.map((d) => stats.days[dayKey(d)] || 0);
+  const max = Math.max(60, ...vals);
+  const names = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+  $('statsBars').innerHTML = days.map((d, i) => `<div class="sb"><span class="sb-v">${vals[i] >= 60 ? Math.round(vals[i] / 60) : ''}</span><i style="height:${Math.max(3, (vals[i] / max) * 100)}%"></i><span class="sb-d">${i === 6 ? 'Nay' : names[d.getDay()]}</span></div>`).join('');
+  // Chuỗi ngày đọc liên tiếp (tính từ hôm nay, hoặc từ hôm qua nếu hôm nay chưa đọc)
+  let streak = 0;
+  const d = new Date();
+  if ((stats.days[dayKey(d)] || 0) < 60) d.setDate(d.getDate() - 1);
+  while ((stats.days[dayKey(d)] || 0) >= 60) { streak++; d.setDate(d.getDate() - 1); }
+  const week = vals.reduce((a, b) => a + b, 0);
+  const all = Object.values(stats.days).reduce((a, b) => a + b, 0);
+  $('statsNums').innerHTML = [
+    ['Hôm nay', fmt(vals[6])], ['7 ngày qua', fmt(week)], ['Chuỗi ngày đọc', `${streak} ngày`],
+    ['Sách đã đọc xong', `${stats.done.length} cuốn`], ['Tổng thời gian', fmt(all)],
+  ].map(([k, v]) => `<div><small>${k}</small><b>${v}</b></div>`).join('');
+  $('statsDialog').showModal();
+}
+
+/* ----- Giữ sách đã tải không bị trình duyệt tự xoá khi máy đầy bộ nhớ ----- */
+if (navigator.storage?.persist) navigator.storage.persisted().then((p) => p || navigator.storage.persist()).catch(() => {});
+async function showStorageInfo() {
+  try {
+    const [est, kept] = await Promise.all([navigator.storage.estimate(), navigator.storage.persisted?.() ?? false]);
+    const mb = (b) => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1)} GB` : `${Math.round(b / 1024 ** 2)} MB`);
+    $('storageInfo').textContent = `Sách & dữ liệu trên máy: ${mb(est.usage || 0)} · ${kept ? 'được giữ lâu dài' : 'máy có thể tự xoá khi đầy bộ nhớ (cài app ra màn hình chính để giữ)'}`;
+  } catch { $('storageInfo').textContent = ''; }
 }
 
 /* ----- PDF ----- */
@@ -970,6 +1084,9 @@ function onPdfLocation(page, pages, labelOnly) {
   document.querySelectorAll('#tocList a').forEach((a, i) => a.classList.toggle('current', R.flatToc[i] === ch));
   updateProgressUI();
   if (labelOnly) return;
+  if (!R.skipNextSave) R.movedSinceOpen = true;
+  readTick({ start: {} });
+  wakeUpdate(true);
   if (R.skipNextSave) { R.skipNextSave = false; return; }
   saveProgress(ch?.label || `Trang ${page}`);
 }
@@ -1082,9 +1199,13 @@ function injectStyle(contents) {
   try {
     const vp = doc.querySelector('meta[name="viewport"]')?.getAttribute('content') || '';
     const vw = Number(vp.match(/width\s*=\s*(\d+)/)?.[1] || 0), vh = Number(vp.match(/height\s*=\s*(\d+)/)?.[1] || 0);
-    fxl = vw > 0 && vh > 0;
-    if (fxl) {
-      const box = $('viewer');
+    const box = $('viewer');
+    // epub.js tự chèn viewport "width=<khung>, height=<khung>, initial-scale=1, …, user-scalable=no" vào MỌI chương
+    // của sách thường → không được coi đó là sách tranh. Sách tranh thật: khai báo pre-paginated, hoặc viewport
+    // riêng của sách (vd. MOBI/AZW3 truyện tranh: "width=620, height=1024") khác cỡ khung đọc.
+    const injected = /user-scalable\s*=\s*no/.test(vp) && Math.abs(vh - box.clientHeight) <= 2;
+    fxl = R.book?.package?.metadata?.layout === 'pre-paginated' || (vw > 0 && vh > 0 && !injected);
+    if (fxl && vw > 0 && vh > 0) {
       const sc = Math.min(box.clientWidth / vw, box.clientHeight / vh);
       fxlPad = Math.max(0, Math.floor((box.clientHeight - vh * sc) / 2));
     }
@@ -1096,7 +1217,27 @@ function injectStyle(contents) {
     const txt = (doc.body.textContent || '').replace(/\s+/g, '').length;
     doc.documentElement.classList.toggle('tree-imgpage', !fxl && imgs > 0 && txt <= 12 * imgs);
   } catch { /* bỏ qua */ }
+  // Căn đều 2 lề: chỉ đoạn văn thường (sách tự căn giữa/phải — tiêu đề, thơ, lời đề tặng — giữ nguyên).
+  // Đo căn lề gốc của sách 1 lần trước khi chèn CSS của app.
+  const justify = settings.justify !== false && !fxl;
+  let lang = '';
+  if (justify) {
+    try {
+      lang = (doc.documentElement.getAttribute('lang') || doc.documentElement.getAttribute('xml:lang')
+        || doc.body.getAttribute('lang') || R.book?.package?.metadata?.language || '').toLowerCase();
+      if (lang && !doc.documentElement.getAttribute('lang')) doc.documentElement.setAttribute('lang', lang);
+      const cw = contents.window;
+      for (const el of doc.body.querySelectorAll('p, li, blockquote, div:not(:has(p, div))')) {
+        if (el.dataset.tj) continue;
+        const a = cw.getComputedStyle(el).textAlign;
+        el.dataset.tj = a === 'start' || a === 'left' || a === 'justify' || a === '-webkit-auto' ? '1' : '0';
+      }
+    } catch { /* bỏ qua */ }
+  }
+  // Tiếng Anh: ngắt từ có gạch nối; tiếng Việt (từ đơn âm): chỉ căn đều + tránh dòng cuối đoạn còn 1 chữ
+  const hyph = justify && /^en/.test(lang) ? 'hyphens: auto; -webkit-hyphens: auto;' : 'hyphens: manual; -webkit-hyphens: manual;';
   style.textContent = `
+    ${justify ? `[data-tj="1"] { text-align: justify !important; text-wrap: pretty; ${hyph} }` : ''}
     html { font-size: ${settings.fontSize}% !important; background: ${t.bg} !important; touch-action: ${settings.flow === 'paginated' ? 'none' : 'pan-y'}; -webkit-tap-highlight-color: transparent; }
     body { font-size: ${bodyFs}px !important; background: ${t.bg} !important; color: ${t.fg} !important; -webkit-text-size-adjust: none; }
     p, li, blockquote, dd, dt, td, div { line-height: ${settings.lineHeight} !important; }
@@ -1179,6 +1320,7 @@ function applyChrome() {
   $('pageAnimRow').hidden = settings.flow !== 'paginated';
   $('startView').value = settings.startView;
   $('spreadMode').value = settings.spread;
+  $('justifyMode').value = settings.justify === false ? 'off' : 'on';
   $('spreadRow').hidden = settings.flow !== 'paginated';
   // 1 trang: khung chữ vừa phải, đặt giữa màn hình (không trải dài hết màn hình rộng)
   document.body.classList.toggle('single-page', settings.spread !== 'double');
@@ -1259,8 +1401,11 @@ let curlPrepTimer = 0;
 function onRelocated(loc) {
   const cfi = loc.start.cfi;
   R.cfi = cfi;
+  if (!R.skipNextSave) R.movedSinceOpen = true;
+  readTick(loc);
+  wakeUpdate(true);
   // Dựng sẵn bản sao trang cho hiệu ứng "Lật giấy" (chương mới / vừa mở sách) khi máy rảnh
-  if (settings.pageAnim === 'curl' && !document.hidden) {
+  if (isCurl() && !document.hidden) {
     clearTimeout(curlPrepTimer);
     curlPrepTimer = setTimeout(() => { const p = pager(); if (p && !curlFinish) curlCloneFor(p.c.scrollLeft); }, 600);
   }
@@ -1279,9 +1424,10 @@ function onRelocated(loc) {
 }
 
 function updateProgressUI() {
-  $('progressText').textContent = R.kind === 'pdf' && R.pdf
+  const left = chapterLeftText();
+  $('progressText').textContent = (R.kind === 'pdf' && R.pdf
     ? `Trang ${R.pdf.page}/${R.pdf.pages} · ${pctText(R.percent)}`
-    : pctText(R.percent);
+    : pctText(R.percent)) + (left ? ` · ${left}` : '');
   if (document.activeElement !== $('progressSlider')) $('progressSlider').value = Math.round(R.percent * 1000);
 }
 
@@ -1351,6 +1497,35 @@ function flushPush() {
 }
 
 // Thiết bị khác vừa đọc tiếp cuốn này
+// Vị trí trên đám mây về sau khi đã mở sách: mới hơn → chưa lật trang thì tự chuyển tới, đã lật thì hỏi
+function applyRemoteOnOpen(id, local, remote) {
+  if (R.id !== id || !remote?.cfi) return;
+  // So với vị trí đã lưu trên máy lúc mở sách (không so với R.lastSavedAt: nếu đã kịp lật trang thì lần lưu mới
+  // của máy này sẽ che mất vị trí xa hơn của máy khác → không hỏi "Đến đó" nữa)
+  if ((remote.updatedAt || 0) <= (local?.updatedAt || 0)) return;
+  if (remote.deviceId === deviceId && R.movedSinceOpen) return; // chính máy này vừa lưu
+  if (remote.cfi === R.cfi && (remote.line || '') === (R.line || '')) return;
+  R.lastSavedAt = Math.max(R.lastSavedAt || 0, remote.updatedAt);
+  const who = remote.deviceId !== deviceId ? (remote.deviceName || 'thiết bị khác') : 'lần đọc trước';
+  const auto = !R.movedSinceOpen;
+  const go = () => {
+    if (R.id !== id) return; // đã đóng / mở cuốn khác trước khi bấm "Đến đó"
+    if (speaker && speaker.state !== 'idle') speaker.stop();
+    R.skipNextSave = auto; // tự chuyển lúc vừa mở: chưa tính là đọc tiếp; bấm "Đến đó": lưu vị trí mới
+    R.percent = remote.percent || R.percent;
+    if (R.kind !== 'pdf' && remote.line) {
+      R.line = remote.line;
+      Promise.resolve(R.rendition?.display(remote.line)).then(() => flashLine(remote.line)).catch(() => {});
+    } else goToLocation(remote.cfi);
+  };
+  if (auto) {
+    go();
+    toast(`Đã chuyển đến ${remote.line ? 'đúng câu' : 'vị trí'} bạn đọc trên ${who}`, null, null, 3500);
+  } else {
+    toast(`${who === 'lần đọc trước' ? 'Lần đọc trước' : who} đã đọc đến ${pctText(remote.percent)}`, 'Đến đó', go, 15000);
+  }
+}
+
 function onRemoteChange(data) {
   if (!R.id || data.deviceId === deviceId || !data.cfi) return;
   if ((data.updatedAt || 0) <= R.lastSavedAt || (data.cfi === R.cfi && (data.line || '') === (R.line || ''))) return;
@@ -1366,6 +1541,8 @@ function onRemoteChange(data) {
 }
 
 async function closeBook() {
+  readTick(null);
+  wakeUpdate(false);
   speaker?.stop();
   ttsRestartAfterRender = false;
   ttsNeedsResync = false;
@@ -1451,7 +1628,7 @@ function curlLayer() {
     layer.innerHTML = `
       <div class="cp-shade"></div>
       <div class="cp-clip">
-        <div class="cp-page cp-front"><div class="cp-pages"></div><div class="cp-bars"></div></div>
+        <div class="cp-page cp-front"><div class="cp-pages"></div><div class="cp-bars"></div><div class="cp-bend"></div></div>
         <div class="cp-page cp-back"><div class="cp-pages"></div><div class="cp-bars"></div><div class="cp-paper"></div><div class="cp-gloss"></div></div>
       </div>`;
     $('reader').appendChild(layer);
@@ -1532,7 +1709,10 @@ function curlState(layer) {
   const W = layer.clientWidth, H = layer.clientHeight;
   const S = 2 * Math.hypot(W, H), L = S, B = Math.max(70, W * 0.3);
   const q = (s) => layer.querySelector(s);
-  const st = { layer, W, H, S, L, B, clip: q('.cp-clip'), front: q('.cp-front'), back: q('.cp-back'), shade: q('.cp-shade'), gloss: q('.cp-gloss') };
+  const st = { layer, W, H, S, L, B, clip: q('.cp-clip'), front: q('.cp-front'), back: q('.cp-back'), shade: q('.cp-shade'), gloss: q('.cp-gloss'), bend: q('.cp-bend') };
+  st.c3d = settings.pageAnim === 'curl3d';
+  layer.classList.toggle('c3d', st.c3d);
+  if (st.bend) { Object.assign(st.bend.style, { width: `${B * 1.3}px`, height: `${L}px` }); st.bend.style.opacity = 0; }
   Object.assign(st.clip.style, { width: `${S}px`, height: `${S}px` });
   for (const p of [st.front, st.back]) Object.assign(p.style, { width: `${W}px`, height: `${H}px` });
   for (const g of [st.shade, st.gloss]) Object.assign(g.style, { width: `${B}px`, height: `${L}px` });
@@ -1559,7 +1739,19 @@ function curlRender(st, t, lift = 0) {
   const band = mMul(F, [1, 0, 0, 1, 0, -L / 2]);        // dải dọc nếp gấp, toả về phía góc trang
   st.clip.style.transform = mCss(clip);
   st.front.style.transform = mCss(inv);
-  st.back.style.transform = mCss(mMul(inv, refl));
+  // 3D: tờ giấy đang dựng lên nhìn từ trên xuống bị "co" theo phương vuông góc nếp gấp (phối cảnh),
+  // co nhiều nhất khi giấy đứng thẳng giữa chừng; phần trang phẳng sát nếp gấp tối dần như mặt giấy cong xuống.
+  let backM = refl;
+  if (st.c3d && len >= 0.5) {
+    const lift3d = Math.sin(Math.PI * Math.min(1, t));
+    const c = 1 - 0.22 * lift3d;                        // hệ số co theo pháp tuyến n
+    const sc = [1 - (1 - c) * nx * nx, -(1 - c) * nx * ny, -(1 - c) * nx * ny, 1 - (1 - c) * ny * ny];
+    const fix = [Px - (sc[0] * Px + sc[2] * Py), Py - (sc[1] * Px + sc[3] * Py)]; // giữ nếp gấp đứng yên
+    backM = mMul([...sc, ...fix], refl);
+    st.bend.style.transform = mCss(mMul(F, [1, 0, 0, 1, -st.B * 1.3, -L / 2]));
+    st.bend.style.opacity = Math.min(1, lift3d * 1.4);
+  } else if (st.bend) st.bend.style.opacity = 0;
+  st.back.style.transform = mCss(mMul(inv, backM));
   st.gloss.style.transform = mCss(band);
   st.shade.style.transform = mCss(band);
   // Bóng mạnh nhất khi trang đang dựng đứng giữa chừng, nhạt dần lúc gần phẳng
@@ -1637,7 +1829,7 @@ function curlBegin(dir) {
       }
       R.rendition?.reportLocation();
       // Chuẩn bị sẵn bản sao cho lần lật sau (chương mới / sau khi đổi cỡ chữ)
-      setTimeout(() => { const q = pager(); if (settings.pageAnim === 'curl' && q) curlCloneFor(q.c.scrollLeft); }, 50);
+      setTimeout(() => { const q = pager(); if (isCurl() && q) curlCloneFor(q.c.scrollLeft); }, 50);
     },
     // Đang lật dở mà lật tiếp → kết thúc ngay theo đúng ý lần trước (thả tay chưa đủ xa thì trả về, không lật)
     cut() { curlAnimate.stop?.(); s.done(s.intent ?? true); },
@@ -1675,7 +1867,7 @@ async function turn(dir, fromScroll, shift = 0) {
   const { c, delta } = p;
   const start = fromScroll ?? c.scrollLeft;
   const within = dir > 0 ? start + c.offsetWidth + delta <= c.scrollWidth + 1 : start > 1;
-  if (within && settings.pageAnim === 'curl' && !shift && fromScroll == null) {
+  if (within && isCurl() && !shift && fromScroll == null) {
     if (await curlTurn(dir)) return; // bản sao chưa sẵn → lần này trượt, lần sau sẽ lật giấy
   }
   if (within) {
@@ -1716,7 +1908,7 @@ function dragMove(x, y) {
     else return;
   }
   const max = p.c.scrollWidth - p.c.offsetWidth;
-  if (settings.pageAnim === 'curl') { // lật giấy: góc trang gấp theo ngón tay
+  if (isCurl()) { // lật giấy: góc trang gấp theo ngón tay
     const now = Date.now();
     s.v = (x - s.lastX) / Math.max(1, now - s.lastT);
     s.lastX = x; s.lastT = now;
@@ -2358,7 +2550,10 @@ for (const dlg of document.querySelectorAll('dialog')) {
 }
 
 $('btnToc').onclick = () => { $('settingsPanel').hidden = true; $('tocPanel').hidden = !$('tocPanel').hidden; document.querySelector('#tocList a.current')?.scrollIntoView({ block: 'center' }); };
-$('btnSettings').onclick = () => { $('tocPanel').hidden = true; $('settingsPanel').hidden = !$('settingsPanel').hidden; fillVoices(); showScreenInfo(); };
+$('btnSettings').onclick = () => { $('tocPanel').hidden = true; $('settingsPanel').hidden = !$('settingsPanel').hidden; fillVoices(); showScreenInfo(); showStorageInfo(); };
+$('btnStats').onclick = openStats;
+$('statsClose').onclick = () => $('statsDialog').close();
+$('justifyMode').onchange = (e) => changeSetting({ justify: e.target.value === 'on' });
 /* ----- Android toàn màn hình: thanh trạng thái của máy bị ẩn → app tự hiện đồng hồ + % pin ở mép trên ----- */
 // (trình duyệt không cho app web đọc sóng điện thoại / wifi, nên chỉ có giờ và pin)
 const wantSysbar = () => (/Android/i.test(navigator.userAgent) && matchMedia('(display-mode: fullscreen)').matches)
@@ -2444,7 +2639,7 @@ $('fontFamily').onchange = (e) => changeSetting({ fontFamily: e.target.value });
 $('flowMode').onchange = (e) => changeSetting({ flow: e.target.value });
 $('pageAnim').onchange = (e) => {
   settings.pageAnim = e.target.value; saveSettings(); // không cần dựng lại trang
-  if (settings.pageAnim === 'curl' && pager()) curlCloneFor(pager().c.scrollLeft); // chuẩn bị sẵn hiệu ứng lật giấy
+  if (isCurl() && pager()) curlCloneFor(pager().c.scrollLeft); // chuẩn bị sẵn hiệu ứng lật giấy
 };
 $('startView').onchange = (e) => { settings.startView = e.target.value; saveSettings(); };
 $('spreadMode').onchange = (e) => changeSetting({ spread: e.target.value });
@@ -2585,6 +2780,7 @@ sync.init(onUser).then(() => {
   // Vừa quay về từ trang chọn sách của Google → tải và mở các cuốn đã chọn
   const picked = sync.takePicked();
   if (picked) importPickedFiles(picked);
+  mergeCloudStats();
   // Chủ thư viện: cập nhật danh mục công khai cho người khác (chạy ngầm)
   if (sync.currentUser()?.provider === 'gdrive') setTimeout(() => refreshCatalogAsOwner(), 8000);
 });

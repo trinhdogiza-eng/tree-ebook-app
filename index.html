@@ -147,6 +147,13 @@
           <option value="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Không chân (Sans)</option>
         </select>
       </div>
+      <div class="setting epub-only">
+        <span>Căn lề</span>
+        <select id="justifyMode">
+          <option value="on">Đều 2 lề (như sách in)</option>
+          <option value="off">Theo sách</option>
+        </select>
+      </div>
       </div>
       <div class="set-tab" data-tab="page" hidden>
       <div class="setting">
@@ -166,7 +173,8 @@
       <div class="setting" id="pageAnimRow">
         <span>Hiệu ứng lật</span>
         <select id="pageAnim">
-          <option value="curl">Lật giấy (như sách thật)</option>
+          <option value="curl3d">Lật giấy 3D (cong như sách thật)</option>
+          <option value="curl">Lật giấy phẳng (nhẹ máy)</option>
           <option value="slide">Trượt (như Play Sách)</option>
           <option value="none">Không</option>
         </select>
@@ -178,6 +186,7 @@
           <option value="library">Vào thư viện</option>
         </select>
       </div>
+      <button type="button" class="btn stats-btn" id="btnStats">📊 Thống kê thời gian đọc</button>
       </div>
       <div class="set-tab" data-tab="voice" hidden>
       <div class="setting">
@@ -222,6 +231,7 @@
         </select>
       </div>
       </div>
+      <p class="hint version" id="storageInfo"></p>
       <p class="hint version" id="appVersion"></p>
       </div>
     </aside>
@@ -273,6 +283,19 @@
       </form>
       <div id="cloudList" class="cloud-list"></div>
       <p id="cloudStatus" class="hint"></p>
+    </div>
+  </dialog>
+
+  <!-- Thống kê thời gian đọc -->
+  <dialog id="statsDialog">
+    <div class="dialog-body">
+      <div class="cloud-head">
+        <div class="cloud-path"><b>Thống kê đọc sách</b><div class="sub">Số phút đọc mỗi ngày (7 ngày gần nhất)</div></div>
+        <button type="button" class="icon" id="statsClose" aria-label="Đóng">✕</button>
+      </div>
+      <div class="stats-bars" id="statsBars"></div>
+      <div class="stats-nums" id="statsNums"></div>
+      <p class="hint">Tính khi đang mở sách (kể cả lúc nghe đọc to trên màn hình); để máy đó quá 5 phút không lật trang thì không tính thêm. Đồng bộ giữa các máy cùng tài khoản Google.</p>
     </div>
   </dialog>
 

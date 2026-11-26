@@ -442,3 +442,22 @@ body[data-theme="dark"] .dock { box-shadow: 0 10px 30px rgba(0, 0, 0, .5), inset
 }
 .toast[hidden] { display: none; }
 .toast .icon { color: var(--bg); }
+
+/* ---------- Thống kê đọc ---------- */
+.stats-btn { width: 100%; margin-top: 6px; }
+.stats-bars { display: flex; align-items: flex-end; gap: 8px; height: 150px; padding: 8px 4px 0; border-bottom: 1px solid var(--line); }
+.stats-bars .sb { flex: 1; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; }
+.stats-bars .sb i { display: block; width: 100%; max-width: 34px; border-radius: 6px 6px 2px 2px; background: var(--accent); min-height: 3px; }
+.stats-bars .sb-v { font-size: 11px; color: var(--muted); min-height: 1em; }
+.stats-bars .sb-d { font-size: 12px; color: var(--muted); padding-bottom: 4px; }
+.stats-nums { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.stats-nums div { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.stats-nums small { display: block; font-size: 12px; color: var(--muted); }
+.stats-nums b { font-size: 17px; }
+
+/* ---------- Lật giấy 3D: mép giấy cong (bóng hình trụ ở 2 bên nếp gấp) ---------- */
+.cp-bend { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform, opacity; pointer-events: none; opacity: 0;
+  background: linear-gradient(to right, transparent 0%, rgba(0, 0, 0, .05) 45%, rgba(0, 0, 0, .16) 82%, rgba(0, 0, 0, .3) 100%); }
+#curlLayer.c3d .cp-gloss { background: linear-gradient(to right, rgba(0, 0, 0, .28) 0%, rgba(0, 0, 0, .1) 6%, rgba(255, 255, 255, .5) 22%, rgba(255, 255, 255, .18) 42%, rgba(0, 0, 0, .1) 75%, rgba(0, 0, 0, .18) 100%); }
+#curlLayer.c3d .cp-back { box-shadow: 0 0 26px rgba(0, 0, 0, .38); }
+body[data-theme="dark"] .cp-bend { background: linear-gradient(to right, transparent 0%, rgba(0, 0, 0, .12) 45%, rgba(0, 0, 0, .3) 82%, rgba(0, 0, 0, .5) 100%); }
