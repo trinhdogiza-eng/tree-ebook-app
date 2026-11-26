@@ -12,8 +12,8 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.24';
-const APP_BUILD = 75; // phải trùng số trong CACHE của sw.js ('epub-reader-v75') — tăng mỗi lần phát hành
+const APP_VERSION = '2.25';
+const APP_BUILD = 76; // phải trùng số trong CACHE của sw.js ('epub-reader-v76') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 // iPhone/iPad mở từ màn hình chính, chế độ toàn màn hình (black-translucent): iOS báo vùng hiển thị (innerHeight)
 // hụt đúng bằng thanh trạng thái so với màn hình thật → đo khoảng hụt và để CSS kéo đáy màn hình app xuống bù.
@@ -89,6 +89,9 @@ const saveSettings = () => lsSet('settings', settings);
 // Bản 2.24: lật giấy 3D thành mặc định (người đang dùng lật giấy phẳng được chuyển 1 lần, vẫn chọn lại được trong Aa)
 if (!settings.pageAnim3d) { if (settings.pageAnim === 'curl') settings.pageAnim = 'curl3d'; settings.pageAnim3d = 1; saveSettings(); }
 const isCurl = () => settings.pageAnim === 'curl' || settings.pageAnim === 'curl3d';
+// Máy yếu (Android báo bộ nhớ ≤ 3 GB): lật giấy phẳng cho mượt, trừ khi người dùng tự chọn 3D.
+// (Safari không báo bộ nhớ, còn số nhân CPU Safari báo không đáng tin → iPhone luôn giữ 3D.)
+const lowEndDevice = () => (navigator.deviceMemory || 8) <= 3;
 // Hiệu ứng "Lật giấy" mới: máy đang dùng kiểu Trượt (mặc định cũ) chuyển sang 1 lần; sau đó tuỳ người dùng chọn
 if (!lsGet('curlIntro', false)) {
   if (settings.pageAnim === 'slide') { settings.pageAnim = 'curl'; saveSettings(); }
@@ -1132,6 +1135,7 @@ async function createRendition(cfi) {
   }).catch(() => {});
   rendition.hooks.content.register((contents) => { normalizeText(contents.document); injectStyle(contents); });
   rendition.on('relocated', onRelocated);
+  rendition.on('rendered', () => curlPrepAll()); // chương kế/trước vừa nạp sẵn → dựng luôn bản sao lật giấy
   rendition.on('click', onFrameClick);
   rendition.on('touchstart', onTouchStart);
   rendition.on('touchmove', onTouchMove);
@@ -1236,6 +1240,7 @@ function injectStyle(contents) {
   }
   // Tiếng Anh: ngắt từ có gạch nối; tiếng Việt (từ đơn âm): chỉ căn đều + tránh dòng cuối đoạn còn 1 chữ
   const hyph = justify && /^en/.test(lang) ? 'hyphens: auto; -webkit-hyphens: auto;' : 'hyphens: manual; -webkit-hyphens: manual;';
+  doc.documentElement.dataset.treeVer = String(++curlVer);
   style.textContent = `
     ${justify ? `[data-tj="1"] { text-align: justify !important; text-wrap: pretty; ${hyph} }` : ''}
     html { font-size: ${settings.fontSize}% !important; background: ${t.bg} !important; touch-action: ${settings.flow === 'paginated' ? 'none' : 'pan-y'}; -webkit-tap-highlight-color: transparent; }
@@ -1397,7 +1402,6 @@ const cfiCmp = (a, b) => { try { return new ePub.CFI().compare(a, b); } catch { 
 // Câu đang đọc còn nằm trong trang đang hiển thị không
 const lineOnPage = (line, loc) => !!line && cfiCmp(line, loc.start.cfi) >= 0 && cfiCmp(line, loc.end.cfi) <= 0;
 
-let curlPrepTimer = 0;
 function onRelocated(loc) {
   const cfi = loc.start.cfi;
   R.cfi = cfi;
@@ -1406,8 +1410,7 @@ function onRelocated(loc) {
   wakeUpdate(true);
   // Dựng sẵn bản sao trang cho hiệu ứng "Lật giấy" (chương mới / vừa mở sách) khi máy rảnh
   if (isCurl() && !document.hidden) {
-    clearTimeout(curlPrepTimer);
-    curlPrepTimer = setTimeout(() => { const p = pager(); if (p && !curlFinish) curlCloneFor(p.c.scrollLeft); }, 600);
+    curlPrepAll();
   }
   // Tự lật sang trang khác (không phải do giọng đọc) → vị trí là đầu trang mới
   if (R.line && !lineOnPage(R.line, loc)) R.line = null;
@@ -1610,10 +1613,10 @@ function animShift(from, to, ms) {
 //   - Mặt sau  = phần phía góc, lật đối xứng qua nếp gấp (ma trận phản chiếu) → chữ in ngược, phủ màu giấy cho mờ.
 //   - Trang mới nằm bên dưới (khung sách thật), có bóng đổ dọc nếp gấp.
 const curlClones = new Map(); // iframe gốc → { frames: [mặt trước, mặt sau], sig, ready }
-const curlSig = (src) => {
-  const d = src.contentDocument;
-  return `${src.offsetWidth}x${src.offsetHeight}|${d?.body?.innerHTML.length}|${[...(d?.querySelectorAll('style') || [])].map((s) => s.textContent.length).join(',')}`;
-};
+// Chữ ký bản sao: đổi khi app chèn lại CSS cho chương (cỡ chữ, nền, căn lề…) hoặc khung đọc đổi cỡ.
+// (Trước đây đọc lại toàn bộ HTML của chương mỗi lần lật → tốn thời gian trên điện thoại với chương dài.)
+let curlVer = 0;
+const curlSig = (src) => `${R.rendition?.manager?.container?.offsetWidth || 0}x${src.offsetHeight}|${src.contentDocument?.documentElement?.dataset.treeVer || 0}`;
 // Lớp lật trùm TOÀN MÀN HÌNH đọc (cả 2 thanh trên/dưới được chụp theo vào trang giấy).
 // Mượt: mỗi khung hình chỉ đổi transform/opacity → GPU ghép lớp có sẵn, không phải vẽ lại chữ.
 //   .cp-clip  = khung vuông rất lớn, xoay theo nếp gấp, overflow:hidden → mép phải của nó chính là nếp gấp
@@ -1663,7 +1666,35 @@ function curlBars(layer) {
 function curlCloneFor(scroll) {
   const view = pageEls().find((v) => v.offsetLeft <= scroll + 1 && scroll < v.offsetLeft + v.offsetWidth - 1);
   const src = view?.querySelector('iframe');
-  if (!src?.contentDocument?.body) return null;
+  const c = curlEnsure(src);
+  if (!c?.ready) return null;
+  for (const o of curlClones.values()) o.frames.forEach((f) => { f.style.display = o === c ? '' : 'none'; });
+  const x = Math.round(scroll - view.offsetLeft);
+  c.frames.forEach((f) => {
+    const se = f.contentDocument?.scrollingElement;
+    if (se) se.scrollLeft = x; else f.style.transform = `translateX(${-x}px)`;
+  });
+  return c;
+}
+// Dựng sẵn bản sao cho mọi chương đang nạp (chương đang đọc + chương kế/trước epub.js đã nạp sẵn) khi máy rảnh
+// → lật giấy lúc nào cũng sẵn, không phải rơi sang kiểu trượt ở trang đầu chương mới
+let curlPrepPending = false;
+function curlPrepAll() {
+  if (!isCurl() || curlPrepPending || document.hidden) return;
+  curlPrepPending = true;
+  const idle = window.requestIdleCallback || ((f) => setTimeout(f, 60));
+  idle(() => {
+    curlPrepPending = false;
+    if (!isCurl() || curlFinish) return;
+    const views = pageEls();
+    const p = pager();
+    // Chương đang đọc trước, rồi tới các chương bên cạnh
+    const cur = p ? views.find((v) => v.offsetLeft <= p.c.scrollLeft + 1 && p.c.scrollLeft < v.offsetLeft + v.offsetWidth - 1) : null;
+    for (const v of [cur, ...views.filter((x) => x !== cur)]) if (v) curlEnsure(v.querySelector('iframe'));
+  }, { timeout: 150 });
+}
+function curlEnsure(src) {
+  if (!src?.contentDocument?.body || !src.offsetHeight) return null; // chương chưa dàn trang xong → để lần sau
   for (const [k, c] of curlClones) if (!k.isConnected) { c.frames.forEach((f) => f.remove()); curlClones.delete(k); } // chương đã gỡ
   const sig = curlSig(src);
   let c = curlClones.get(src);
@@ -1689,13 +1720,6 @@ function curlCloneFor(scroll) {
     }
     curlClones.set(src, c);
   }
-  if (!c.ready) return null;
-  for (const o of curlClones.values()) o.frames.forEach((f) => { f.style.display = o === c ? '' : 'none'; });
-  const x = Math.round(scroll - view.offsetLeft);
-  c.frames.forEach((f) => {
-    const se = f.contentDocument?.scrollingElement;
-    if (se) se.scrollLeft = x; else f.style.transform = `translateX(${-x}px)`;
-  });
   return c;
 }
 
@@ -1710,7 +1734,7 @@ function curlState(layer) {
   const S = 2 * Math.hypot(W, H), L = S, B = Math.max(70, W * 0.3);
   const q = (s) => layer.querySelector(s);
   const st = { layer, W, H, S, L, B, clip: q('.cp-clip'), front: q('.cp-front'), back: q('.cp-back'), shade: q('.cp-shade'), gloss: q('.cp-gloss'), bend: q('.cp-bend') };
-  st.c3d = settings.pageAnim === 'curl3d';
+  st.c3d = settings.pageAnim === 'curl3d' && (settings.pageAnimUser || !lowEndDevice());
   layer.classList.toggle('c3d', st.c3d);
   if (st.bend) { Object.assign(st.bend.style, { width: `${B * 1.3}px`, height: `${L}px` }); st.bend.style.opacity = 0; }
   Object.assign(st.clip.style, { width: `${S}px`, height: `${S}px` });
@@ -1765,7 +1789,7 @@ function curlAnimate(layer, from, to, ms, lift = 0) {
     const t0 = performance.now();
     let stopped = false;
     // Bấm/chạm: tăng tốc rồi chậm dần; thả tay giữa chừng: đi tiếp theo đà ngón tay rồi chậm dần
-    const ease = from === 0 || from === 1 ? easeInOut : (x) => 1 - Math.pow(1 - x, 3);
+    const ease = from === 0 || from === 1 ? (x) => 1 - Math.pow(1 - x, 2.4) : (x) => 1 - Math.pow(1 - x, 3);
     const step = (now) => {
       if (stopped) return;
       const k = Math.min(1, (now - t0) / ms);
@@ -1783,11 +1807,13 @@ function curlBegin(dir) {
   const { c, delta } = p;
   const start = c.scrollLeft;
   const within = dir > 0 ? start + c.offsetWidth + delta <= c.scrollWidth + 1 : start > 1;
+  curlBegin.notReady = false;
   if (!within) return null;
   const target = start + dir * delta;
   // Lật tới: trang đang lật = trang hiện tại, bên dưới là trang sau. Lật lùi: trang đang lật = trang trước.
   const clone = curlCloneFor(dir > 0 ? start : target);
-  if (!clone) { curlCloneFor(start); return null; } // chưa sẵn → lần này dùng kiểu trượt
+  curlBegin.notReady = !clone;
+  if (!clone) { curlCloneFor(start); return null; } // chưa sẵn: lật bằng nút chờ thêm chút (curlTurn), kéo tay thì thử lại
   // Nhớ vị trí theo "chương + chỗ trong chương", KHÔNG theo toạ độ tuyệt đối: trong lúc lật, epub.js có thể gỡ
   // bớt chương đã qua / chèn chương phía trước và tự dời scrollLeft → đặt lại toạ độ cũ sẽ nhảy nhiều trang.
   const rel = (pos) => { const v = pageEls().find((e) => e.offsetLeft <= pos + 1 && pos < e.offsetLeft + e.offsetWidth - 1); return v ? { v, off: pos - v.offsetLeft } : null; };
@@ -1809,11 +1835,14 @@ function curlBegin(dir) {
       if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (!finished) curlRender(st, s.t, lastLift); });
     },
     // commit = true: lật hẳn; false: trả trang về như cũ
-    async end(commit, lift = lastLift) {
+    // v: vận tốc ngón tay lúc thả (px/ms). Chạm/bấm lật: ~0,34 giây như Apple Books; vuốt mạnh: nhanh theo đà tay
+    async end(commit, lift = lastLift, v = 0) {
       s.intent = commit;
       if (raf) { cancelAnimationFrame(raf); raf = 0; }
       const to = dir > 0 ? (commit ? 1 : 0) : (commit ? 0 : 1);
-      const ms = 180 + 520 * Math.abs(to - s.t);
+      const dist = Math.abs(to - s.t);
+      const speed = Math.abs(v);
+      const ms = Math.round(Math.max(140, Math.min(340, speed > 0.3 ? (dist * st.W) / (speed * 1.1) : 120 + 220 * dist)));
       await curlAnimate(st, s.t, to, ms, lift);
       s.done(commit);
     },
@@ -1829,7 +1858,7 @@ function curlBegin(dir) {
       }
       R.rendition?.reportLocation();
       // Chuẩn bị sẵn bản sao cho lần lật sau (chương mới / sau khi đổi cỡ chữ)
-      setTimeout(() => { const q = pager(); if (isCurl() && q) curlCloneFor(q.c.scrollLeft); }, 50);
+      curlPrepAll();
     },
     // Đang lật dở mà lật tiếp → kết thúc ngay theo đúng ý lần trước (thả tay chưa đủ xa thì trả về, không lật)
     cut() { curlAnimate.stop?.(); s.done(s.intent ?? true); },
@@ -1839,7 +1868,9 @@ function curlBegin(dir) {
 }
 // Lật bằng nút / chạm mép / phím: trả về false nếu chưa làm được (để dùng kiểu trượt)
 async function curlTurn(dir) {
-  const s = curlBegin(dir);
+  let s = curlBegin(dir);
+  // Bản sao đang dựng dở (vừa sang chương / vừa đổi cỡ chữ): chờ tối đa ~0,15 giây thay vì đổi sang kiểu trượt
+  for (let i = 0; !s && curlBegin.notReady && i < 10; i++) { await new Promise((r) => setTimeout(r, 15)); s = curlBegin(dir); }
   if (!s) return false;
   await s.end(true);
   return true;
@@ -1912,7 +1943,11 @@ function dragMove(x, y) {
     const now = Date.now();
     s.v = (x - s.lastX) / Math.max(1, now - s.lastT);
     s.lastX = x; s.lastT = now;
-    if (!s.curl && !s.noCurl) { s.curl = curlBegin(dx < 0 ? 1 : -1); if (!s.curl) s.noCurl = true; }
+    if (!s.curl && !s.noCurl) {
+      s.curl = curlBegin(dx < 0 ? 1 : -1);
+      s.curlTry ||= now;
+      if (!s.curl && !(curlBegin.notReady && now - s.curlTry < 200)) s.noCurl = true; // chưa sẵn: thử lại ở lần di tay kế
+    }
     if (s.curl) {
       const prog = Math.min(1, Math.abs(dx) / (p.c.offsetWidth * 0.95));
       s.lift = Math.max(-0.12, Math.min(0.3, -dy / p.c.offsetHeight)); // kéo lên → góc nhấc cao hơn
@@ -1945,7 +1980,7 @@ function dragEnd(x, y) {
     const fling = Math.abs(s.v) > 0.35 && Math.sign(-s.v) === s.curl.dir;
     const back = Math.abs(s.v) > 0.35 && Math.sign(-s.v) === -s.curl.dir;
     const prog = s.curl.dir > 0 ? s.curl.t : 1 - s.curl.t;
-    s.curl.end(!back && (fling || prog > 0.28), s.lift || 0);
+    s.curl.end(!back && (fling || prog > 0.28), s.lift || 0, s.v);
     return 'done';
   }
   if (s.active && p) {
@@ -2639,7 +2674,9 @@ $('fontFamily').onchange = (e) => changeSetting({ fontFamily: e.target.value });
 $('flowMode').onchange = (e) => changeSetting({ flow: e.target.value });
 $('pageAnim').onchange = (e) => {
   settings.pageAnim = e.target.value; saveSettings(); // không cần dựng lại trang
-  if (isCurl() && pager()) curlCloneFor(pager().c.scrollLeft); // chuẩn bị sẵn hiệu ứng lật giấy
+  settings.pageAnimUser = 1; // người dùng tự chọn → không tự đổi theo cấu hình máy
+  saveSettings();
+  curlPrepAll(); // chuẩn bị sẵn hiệu ứng lật giấy
 };
 $('startView').onchange = (e) => { settings.startView = e.target.value; saveSettings(); };
 $('spreadMode').onchange = (e) => changeSetting({ spread: e.target.value });
