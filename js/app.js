@@ -13,7 +13,7 @@ import {
 
 /* global ePub */
 const APP_VERSION = '2.25';
-const APP_BUILD = 77; // phải trùng số trong CACHE của sw.js ('epub-reader-v77') — tăng mỗi lần phát hành
+const APP_BUILD = 78; // phải trùng số trong CACHE của sw.js ('epub-reader-v78') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 // iPhone/iPad mở từ màn hình chính, chế độ toàn màn hình (black-translucent): iOS báo vùng hiển thị (innerHeight)
 // hụt đúng bằng thanh trạng thái so với màn hình thật → đo khoảng hụt và để CSS kéo đáy màn hình app xuống bù.
@@ -492,13 +492,117 @@ async function loadKindleList() {
   } catch { kindleList = { locked: new Set(), old: new Set(), open: new Set() }; }
   return kindleList;
 }
+// Kết quả quét của chủ thư viện, lưu trong danh mục (trường k) → mọi máy cùng thấy
+let kCat = null;
+function catalogKindle() {
+  const k = catalog?.k;
+  if (!k) return null;
+  if (kCat?.at !== k.at) kCat = { at: k.at, locked: new Set(k.locked || []), old: new Set(k.old || []), open: new Set((k.open || '').match(/.{8}/g) || []) };
+  return kCat;
+}
 // 'locked' | 'old' | 'open' | undefined (chưa biết)
 function kindleState(it) {
   if (it.isFolder || !isKindleName(it.name)) return 'open';
-  if (kindleList?.locked.has(it.id)) return 'locked';
-  if (kindleList?.old.has(it.id)) return 'old';
-  if (kindleList?.open.has(it.id.slice(0, 8))) return 'open';
+  const own = kscan?.[it.id];
+  if (own) return own === 'l' ? 'locked' : own === 'o' ? 'old' : 'open';
+  for (const src of [catalogKindle(), kindleList]) {
+    if (!src) continue;
+    if (src.locked.has(it.id)) return 'locked';
+    if (src.old.has(it.id)) return 'old';
+    if (src.open.has(it.id.slice(0, 8))) return 'open';
+  }
   return kindleMine[it.id];
+}
+/* Chủ thư viện (đăng nhập, có quyền đọc cả Drive): app tự quét dần mọi sách Kindle trong kho bằng quyền tài khoản
+   (đọc 4 KB đầu mỗi tệp — Google không chặn như khi dùng khoá API công khai), nhớ trong máy, rồi ghi kết quả
+   vào danh mục để người khác cũng thấy nhãn "Khoá Kindle". Lần sau mở app chỉ quét tệp mới. */
+const K_KSCAN = 'kindleScan'; // { mã tệp: 'l' (khoá) | 'o' (PRC cũ) | 'n' (đọc được) | 'x' (không đọc được tệp) }
+let kscan = (() => { try { return JSON.parse(localStorage.getItem(K_KSCAN) || 'null'); } catch { return null; } })();
+const kscanProgress = { running: false, done: 0, todo: 0 };
+let kscanCat = null;
+// Trên máy thử (localhost) có thể thay hàm đọc đầu tệp để chạy thử không cần đăng nhập
+const kHead = (...a) => (location.hostname === 'localhost' && window.__kHead ? window.__kHead(...a) : sync.headBytes(...a));
+if (location.hostname === 'localhost') window.__ownerKindleScan = (c) => ownerKindleScan(c);
+const kscanSave = () => { try { localStorage.setItem(K_KSCAN, JSON.stringify(kscan)); } catch { /* bộ nhớ đầy */ } };
+function kindleField(c) {
+  const m = kscan || {};
+  const locked = [], old = [];
+  let open = '', total = 0;
+  for (const b of c.b) {
+    if (!isKindleName(b[1])) continue;
+    total++;
+    const s = m[b[0]];
+    if (s === 'l') locked.push(b[0]); else if (s === 'o') old.push(b[0]); else if (s === 'n') open += b[0].slice(0, 8);
+  }
+  return { at: Date.now(), total, scanned: locked.length + old.length + open.length / 8, locked, old, open };
+}
+async function ownerKindleScan(c) {
+  if (kscanProgress.running || !c?.b) return;
+  kscanProgress.running = true;
+  kscanCat = c;
+  try {
+    kscan ||= {};
+    // Dùng lại kết quả đã có (tệp quét sẵn đi kèm app, danh mục cũ) để khỏi đọc lại
+    await loadKindleList();
+    const prev = catalogKindle();
+    const kb = c.b.filter((b) => isKindleName(b[1]));
+    for (const b of kb) {
+      if (kscan[b[0]]) continue;
+      for (const src of [prev, kindleList]) {
+        if (!src) continue;
+        if (src.locked.has(b[0])) kscan[b[0]] = 'l';
+        else if (src.old.has(b[0])) kscan[b[0]] = 'o';
+        else if (src.open.has(b[0].slice(0, 8))) kscan[b[0]] = 'n';
+        if (kscan[b[0]]) break;
+      }
+    }
+    const todo = kb.filter((b) => !kscan[b[0]]);
+    Object.assign(kscanProgress, { done: 0, todo: todo.length });
+    const publish = async () => {
+      kscanSave();
+      c.k = kindleField(c);
+      if (catalog && catalog.root === c.root) { catalog.k = c.k; try { localStorage.setItem(K_CATALOG, JSON.stringify(catalog)); } catch { /* bỏ qua */ } }
+      try { await sync.saveCatalog(c, cloudConfig.libraryFolderId); } catch (e) { console.warn('Chưa lưu được kết quả quét sách Kindle', e); }
+    };
+    if (!todo.length) { if (!c.k || c.k.scanned !== kindleField(c).scanned) await publish(); return; }
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    let i = 0, fails = 0, sinceSave = 0;
+    const worker = async () => {
+      while (i < todo.length && fails < 8) {
+        const b = todo[i++];
+        try {
+          let buf = await kHead(b[0], 0, 4095);
+          let s = kindleHeadState(buf);
+          if (s?.need) { buf = await kHead(b[0], 0, s.need + 64); s = kindleHeadState(buf); }
+          kscan[b[0]] = s === 'locked' ? 'l' : s === 'old' ? 'o' : 'n';
+          fails = 0;
+        } catch (e) {
+          if (e.status === 404) kscan[b[0]] = 'x';
+          else { fails++; todo.push(b); await sleep(30000 * fails); continue; } // Google bận → nghỉ, thử lại tệp này sau
+        }
+        kscanProgress.done++;
+        if (++sinceSave >= 500) { sinceSave = 0; await publish(); }
+        await sleep(150);
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    await publish();
+  } catch (e) {
+    console.warn('Quét sách Kindle dừng giữa chừng', e);
+  } finally {
+    kscanProgress.running = false;
+    showKindleInfo();
+  }
+}
+// Dòng thống kê trong menu Aa
+function showKindleInfo() {
+  const el = $('kindleInfo');
+  if (!el) return;
+  const c = kscanCat || catalog;
+  const k = kscan && c ? kindleField(c) : c?.k;
+  if (!k?.total) { el.textContent = ''; return; }
+  const run = kscanProgress.running ? ` · đang quét (${kscanProgress.done}/${kscanProgress.todo})` : '';
+  el.textContent = `Sách Kindle trong kho: ${k.total.toLocaleString('vi')} cuốn · đã kiểm tra ${k.scanned.toLocaleString('vi')} · 🔒 khoá ${k.locked.length.toLocaleString('vi')} · PRC cũ ${k.old.length}${run}`;
 }
 function rememberKindle(id, s) {
   kindleMine[id] = s;
@@ -571,6 +675,7 @@ async function refreshCatalogAsOwner(force = false) {
   try {
     const c = await sync.buildCatalog(cloudConfig.libraryFolderId, extraLibs());
     lsSet('catalogCfg', cfgKey);
+    c.k = kscan ? kindleField(c) : catalog?.k; // giữ kết quả quét sách Kindle khoá
     const fileId = await sync.saveCatalog(c, cloudConfig.libraryFolderId);
     console.info(`Danh mục thư viện: ${c.f.length} thư mục, ${c.b.length} cuốn → tệp ${fileId}`);
     return { ...c, fileId };
@@ -581,6 +686,16 @@ async function refreshCatalogAsOwner(force = false) {
   }
 }
 window.treeRefreshCatalog = () => refreshCatalogAsOwner(true);
+// Chủ thư viện: cập nhật danh mục (nếu tới hạn) rồi quét tiếp sách Kindle chưa kiểm tra
+async function ownerTasks() {
+  if (!cloudConfig.libraryFolderId || !cloudConfig.catalogFileId || !(await sync.hasFullDrive())) return;
+  let c = await refreshCatalogAsOwner();
+  if (!c) {
+    try { c = JSON.parse(new TextDecoder().decode(await sync.download(cloudConfig.catalogFileId))); } catch (e) { console.warn('Không đọc được danh mục', e); return; }
+  }
+  if (!catalog) { catalog = c; }
+  ownerKindleScan(c);
+}
 
 async function showCloudFolder() {
   cloudNav.searching = false;
@@ -2654,7 +2769,7 @@ for (const dlg of document.querySelectorAll('dialog')) {
 }
 
 $('btnToc').onclick = () => { $('settingsPanel').hidden = true; $('tocPanel').hidden = !$('tocPanel').hidden; document.querySelector('#tocList a.current')?.scrollIntoView({ block: 'center' }); };
-$('btnSettings').onclick = () => { $('tocPanel').hidden = true; $('settingsPanel').hidden = !$('settingsPanel').hidden; fillVoices(); showScreenInfo(); showStorageInfo(); };
+$('btnSettings').onclick = () => { $('tocPanel').hidden = true; $('settingsPanel').hidden = !$('settingsPanel').hidden; fillVoices(); showScreenInfo(); showStorageInfo(); showKindleInfo(); };
 $('btnStats').onclick = openStats;
 $('statsClose').onclick = () => $('statsDialog').close();
 $('justifyMode').onchange = (e) => changeSetting({ justify: e.target.value === 'on' });
@@ -2888,7 +3003,7 @@ sync.init(onUser).then(() => {
   if (picked) importPickedFiles(picked);
   mergeCloudStats();
   // Chủ thư viện: cập nhật danh mục công khai cho người khác (chạy ngầm)
-  if (sync.currentUser()?.provider === 'gdrive') setTimeout(() => refreshCatalogAsOwner(), 8000);
+  if (sync.currentUser()?.provider === 'gdrive') setTimeout(() => ownerTasks(), 8000);
 });
 
 // Biết sẵn giọng AI đã tải về máy chưa (để bấm 🔊 là dùng được ngay nếu chọn "giọng AI suốt")
