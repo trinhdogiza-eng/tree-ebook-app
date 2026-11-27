@@ -659,6 +659,11 @@ export async function fileCategory(fileId) {
   return folderNames.get(pid);
 }
 
+// Chủ thư viện (đã đăng nhập): đọc vài KB đầu 1 tệp bằng quyền tài khoản (không bị giới hạn như khoá API công khai)
+export async function headBytes(fileId, from = 0, to = 4095) {
+  const r = await apiOk(`${GDRIVE}/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, { headers: { Range: `bytes=${from}-${to}` } });
+  return r.arrayBuffer();
+}
 export async function download(fileId) {
   const url = session.provider === 'onedrive'
     ? `${GRAPH}/me/drive/items/${fileId}/content`
