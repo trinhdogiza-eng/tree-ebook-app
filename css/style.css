@@ -379,6 +379,8 @@ dialog.tall .cloud-list { flex: 1 1 auto; min-height: 0; }
 .cloud-item .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cloud-item .sz { color: var(--muted); font-size: 12px; flex: none; }
 .cloud-item.have .sz { color: #3a9d5d; }
+.cloud-item.locked .nm { opacity: .55; }
+.cloud-item.locked .sz { color: #c0392b; font-weight: 600; }
 
 /* ---------- Hiệu ứng "Lật giấy" ---------- */
 /* Lớp phủ đúng vị trí khung chữ; luôn được dựng (ẩn bằng visibility) để bản sao trang sẵn sàng ngay khi lật */
