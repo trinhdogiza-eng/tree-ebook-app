@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import * as sync from './sync.js';
 import { PdfReader, openPdf, pdfInfo, isPdfBuffer } from './pdf-reader.js';
-import { kindleToEpub, isKindleBuffer, KINDLE_EXT, KINDLE_MIME } from './mobi-convert.js';
+import { kindleToEpub, isKindleBuffer, kindleHeadState, KINDLE_EXT, KINDLE_MIME } from './mobi-convert.js';
 import { pickBooks, pickerReady, libraryUrl } from './picker.js';
 import { cloudConfig } from './cloud-config.js';
 import { LIBRARY_CATEGORIES } from './library-categories.js';
@@ -13,7 +13,7 @@ import {
 
 /* global ePub */
 const APP_VERSION = '2.25';
-const APP_BUILD = 76; // phải trùng số trong CACHE của sw.js ('epub-reader-v76') — tăng mỗi lần phát hành
+const APP_BUILD = 77; // phải trùng số trong CACHE của sw.js ('epub-reader-v77') — tăng mỗi lần phát hành
 const $ = (id) => document.getElementById(id);
 // iPhone/iPad mở từ màn hình chính, chế độ toàn màn hình (black-translucent): iOS báo vùng hiển thị (innerHeight)
 // hụt đúng bằng thanh trạng thái so với màn hình thật → đo khoảng hụt và để CSS kéo đáy màn hình app xuống bù.
@@ -476,8 +476,75 @@ function catalogSearch(c, q) {
   return c.b.filter((b) => { const n = norm(b[1]); return words.every((w) => n.includes(w)); })
     .slice(0, 300).map(catalogBook(c));
 }
+/* ----- Sách Kindle có khoá DRM: nhận ra trước, ghi nhãn "Khoá Kindle" trong danh sách ----- */
+// data/kindle-khoa.json: kết quả quét cả kho (mã các tệp bị khoá / PRC dạng cũ). Tệp mới chưa quét: app tự xem
+// vài KB đầu tệp (không tải cả cuốn) rồi nhớ lại trong máy.
+const K_KLOCK = 'kindleLock';
+let kindleList = null;
+const kindleMine = (() => { try { return JSON.parse(localStorage.getItem(K_KLOCK) || '{}'); } catch { return {}; } })();
+const isKindleName = (n) => KINDLE_EXT.test(n || '');
+async function loadKindleList() {
+  if (kindleList) return kindleList;
+  try {
+    const j = await (await fetch(`data/kindle-khoa.json?b=${APP_BUILD}`)).json();
+    // open: 8 ký tự đầu mã các tệp đã quét và đọc được (để khỏi xem lại)
+    kindleList = { locked: new Set(j.locked || []), old: new Set(j.old || []), open: new Set((j.open || '').match(/.{8}/g) || []) };
+  } catch { kindleList = { locked: new Set(), old: new Set(), open: new Set() }; }
+  return kindleList;
+}
+// 'locked' | 'old' | 'open' | undefined (chưa biết)
+function kindleState(it) {
+  if (it.isFolder || !isKindleName(it.name)) return 'open';
+  if (kindleList?.locked.has(it.id)) return 'locked';
+  if (kindleList?.old.has(it.id)) return 'old';
+  if (kindleList?.open.has(it.id.slice(0, 8))) return 'open';
+  return kindleMine[it.id];
+}
+function rememberKindle(id, s) {
+  kindleMine[id] = s;
+  try { localStorage.setItem(K_KLOCK, JSON.stringify(kindleMine)); } catch { /* bộ nhớ đầy */ }
+}
+async function probeKindle(it) {
+  const key = cloudConfig.googleApiKey;
+  let buf = await sync.publicHead(it.id, key, it.rk, 0, 4095);
+  let s = kindleHeadState(buf);
+  if (s?.need) { buf = await sync.publicHead(it.id, key, it.rk, 0, s.need + 64); s = kindleHeadState(buf); }
+  s = s === 'locked' || s === 'old' ? s : 'open';
+  rememberKindle(it.id, s);
+  return s;
+}
+const KINDLE_MSG = {
+  locked: 'Sách này có khoá bản quyền Kindle (DRM) nên không app nào ngoài Kindle mở được. Hãy đọc bằng app/máy Kindle của tài khoản đã mua, hoặc tìm bản EPUB/MOBI không khoá.',
+  old: 'Tệp PRC dạng PalmDoc rất cũ — app chưa đọc được định dạng này.',
+};
+function markKindle(btn, s) {
+  if (!btn || (s !== 'locked' && s !== 'old')) return;
+  btn.classList.add('locked');
+  btn.querySelector('.ic').textContent = '🔒';
+  btn.querySelector('.sz').textContent = s === 'locked' ? 'Khoá Kindle' : 'PRC cũ';
+  btn.onclick = () => toast(KINDLE_MSG[s], null, null, 8000);
+}
+// Sau khi hiện danh sách: xem nhanh các tệp Kindle chưa biết (tệp mới, chưa có trong kết quả quét):
+// tối đa 20 tệp mỗi lần, 2 tệp một lúc — để Google không chặn lượt tải sách vì hỏi quá dày
+async function probeVisibleKindle(items) {
+  const todo = items.filter((it) => it.pub && !it.isFolder && isKindleName(it.name) && !kindleState(it)).slice(0, 20);
+  let i = 0;
+  const seq = cloudLoadSeq;
+  const worker = async () => {
+    while (i < todo.length && seq === cloudLoadSeq) {
+      const it = todo[i++];
+      try { markKindle($('cloudList').querySelector(`[data-id="${CSS.escape(it.id)}"]`), await probeKindle(it)); } catch { /* bỏ qua */ }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(2, todo.length) }, worker));
+}
 async function downloadAndOpenPublic(it) {
   try {
+    if (isKindleName(it.name) && !kindleState(it)) {
+      toast(`Đang kiểm tra “${it.name}”…`, null, null, 0);
+      const s = await probeKindle(it).catch(() => 'open');
+      if (s !== 'open') { toast(KINDLE_MSG[s], null, null, 8000); markKindle($('cloudList').querySelector(`[data-id="${CSS.escape(it.id)}"]`), s); return; }
+    }
     toast(`Đang tải “${it.name}”…`, null, null, 0);
     const buf = await sync.downloadPublic(it.id, cloudConfig.googleApiKey, it.rk);
     const fileName = /\.(epub|pdf)$/i.test(it.name) || KINDLE_EXT.test(it.name) ? it.name
@@ -551,7 +618,7 @@ async function loadCloudItems(loader, cacheKey = '') {
   const list = $('cloudList');
   const seq = ++cloudLoadSeq;
   const cached = cacheKey && cloudCache.get(cacheKey);
-  const books = await db.all('books');
+  const [books] = await Promise.all([db.all('books'), loadKindleList()]);
   const have = new Set(books.map((b) => b.source?.id).filter(Boolean));
   if (cached) { renderCloudItems(cached, have); $('cloudStatus').textContent = ''; list.scrollTop = 0; }
   else { list.innerHTML = ''; $('cloudStatus').textContent = 'Đang tải danh sách…'; }
@@ -585,9 +652,11 @@ function renderCloudItems(items, have) {
       b.onclick = it.id === MY_DRIVE ? () => { $('cloudDialog').close(); openDriveDialog(sync.currentUser()); }
         : it.isFolder ? () => { cloudNav.stack.push(it.live ? { id: it.id, name: it.name, live: true } : { id: it.id, name: it.name }); $('cloudSearch').value = ''; showCloudFolder(); }
           : it.pub ? () => downloadAndOpenPublic(it) : () => downloadAndOpen(it.id, it.name);
+      markKindle(b, kindleState(it));
       list.appendChild(b);
     }
   }
+  probeVisibleKindle(items);
 }
 /* ----- Dock: Trang chủ / Google Drive / Thêm sách / Thiết bị khác ----- */
 let libTab = 'home';
