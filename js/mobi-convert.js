@@ -30,6 +30,20 @@ function isEncrypted(buf) {
   return rec0 + 14 <= buf.byteLength && v.getUint16(rec0 + 12) !== 0;
 }
 
+// Xem nhanh phần đầu tệp (không cần tải cả cuốn) → 'locked' (có DRM Kindle), 'open' (đọc được),
+// 'old' (PRC PalmDoc cũ, chưa hỗ trợ), 'bad' (không phải sách Kindle) hoặc { need: số byte cần đọc thêm }
+export function kindleHeadState(buf) {
+  const b = new Uint8Array(buf);
+  const kind = kindleKind(buf);
+  // Topaz (.azw/.tpz, "TPZ") và KFX ("\xeaDRMION" = KFX có DRM) không phải tệp PDB — Kindle khoá, không đọc được
+  if (!kind && b.length >= 8 && (ascii(b, 0, 3) === 'TPZ' || (b[0] === 0xea && ascii(b, 1, 7) === 'DRMION'))) return 'locked';
+  if (!kind) return 'bad';
+  if (kind === 'palmdoc') return 'old';
+  const rec0 = new DataView(buf).getUint32(78);
+  if (rec0 + 14 > b.length) return { need: rec0 + 16 };
+  return isEncrypted(buf) ? 'locked' : 'open';
+}
+
 /* ---------- nhận dạng tài nguyên (ảnh, phông, CSS) ---------- */
 function sniff(bytes, hint) {
   const h = (n) => ascii(bytes, 0, n);
