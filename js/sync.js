@@ -821,6 +821,14 @@ async function publicFetch(fileId, apiKey, resourceKey) {
   }
   return r;
 }
+// Đọc vài KB đầu của 1 tệp công khai (để xem sách Kindle có khoá DRM không mà không tải cả cuốn)
+export async function publicHead(fileId, apiKey, resourceKey, from = 0, to = 65535) {
+  const headers = { Range: `bytes=${from}-${to}` };
+  if (resourceKey) headers['X-Goog-Drive-Resource-Keys'] = `${fileId}/${resourceKey}`;
+  const r = await fetch(`${GDRIVE}/files/${encodeURIComponent(fileId)}?alt=media&key=${encodeURIComponent(apiKey)}`, { headers });
+  if (!r.ok) { const err = new Error(`HTTP ${r.status}`); err.status = r.status; throw err; }
+  return r.arrayBuffer();
+}
 export const fetchCatalog = async (fileId, apiKey) => (await publicFetch(fileId, apiKey)).json();
 export const downloadPublic = async (fileId, apiKey, resourceKey) => (await publicFetch(fileId, apiKey, resourceKey)).arrayBuffer();
 
